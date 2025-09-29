@@ -1,256 +1,83 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Form, Request
-from fastapi.responses import JSONResponse, HTMLResponse
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request, Depends
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import Session
-import pandas as pd
-import io
-import json
-import uuid
-from datetime import datetime
-from typing import List, Dict, Any
-import base64
+from fastapi.middleware.cors import CORSMiddleware
+import os
+from decouple import config
 
-# Import internal modules
-from .database import get_db, ColumnMapping, ImportJob, ERPConnection
-from .models import ColumnMappingCreate, ImportRequest, ERPConnectionCreate
-from .erp_integration import ERPIntegration
-from .utils.file_processor import process_excel_file, process_csv_file
-from .utils.validators import validate_business_rules
-from .utils.mapping_engine import MappingEngine
+from .routes import api_router
+from .database.supabase_client import supabase
+from .websocket_manager import websocket_manager
+
+# Configuration
+DEBUG = config("DEBUG", default=False, cast=bool)
+ALLOWED_ORIGINS = config("ALLOWED_ORIGINS", default="http://localhost:3000").split(",")
 
 app = FastAPI(
-    title="POS-ERP Middleware with Custom Mapping",
-    description="Advanced Excel import with customizable column mapping",
-    version="1.0.0"
+    title="Rangoon Middleware",
+    description="Advanced Excel Import with Custom Mapping & ERP Integration",
+    version="2.0.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc"
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Mount static files and templates
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Initialize services
-erp_integration = ERPIntegration()
-mapping_engine = MappingEngine()
+# Include API routes
+app.include_router(api_router, prefix="/api")
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request, db: Session = Depends(get_db)):
-    """Main dashboard"""
-    mappings = db.query(ColumnMapping).filter(ColumnMapping.is_active == True).all()
-    recent_jobs = db.query(ImportJob).order_by(ImportJob.created_at.desc()).limit(10).all()
-    
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
-        "mappings": mappings,
-        "recent_jobs": recent_jobs
-    })
+async def dashboard(request: Request):
+    """Main dashboard page"""
+    return templates.TemplateResponse("dashboard.html", {"request": request})
 
 @app.get("/mapping/create", response_class=HTMLResponse)
 async def create_mapping_page(request: Request):
     """Column mapping configuration page"""
     return templates.TemplateResponse("mapping_config.html", {"request": request})
 
-@app.post("/api/mappings")
-async def create_mapping(mapping: ColumnMappingCreate, db: Session = Depends(get_db)):
-    """Create new column mapping configuration"""
-    
-    # Validate mapping configuration
-    validation = mapping_engine.validate_mapping_config(mapping.dict())
-    if not validation["is_valid"]:
-        raise HTTPException(400, detail={"errors": validation["errors"]})
-    
-    # Check if mapping name already exists
-    existing = db.query(ColumnMapping).filter(ColumnMapping.mapping_name == mapping.mapping_name).first()
-    if existing:
-        raise HTTPException(400, detail="Mapping name already exists")
-    
-    # Create new mapping
-    db_mapping = ColumnMapping(
-        mapping_name=mapping.mapping_name,
-        source_columns=mapping.source_columns,
-        target_columns=mapping.target_columns,
-        mapping_rules=mapping.mapping_rules or {}
-    )
-    
-    db.add(db_mapping)
-    db.commit()
-    db.refresh(db_mapping)
-    
-    return {"status": "success", "mapping_id": db_mapping.id}
+@app.get("/upload/status", response_class=HTMLResponse)
+async def upload_status_page(request: Request):
+    """Upload status monitoring page"""
+    return templates.TemplateResponse("upload_status.html", {"request": request})
 
-@app.get("/api/mappings")
-async def get_mappings(db: Session = Depends(get_db)):
-    """Get all column mappings"""
-    mappings = db.query(ColumnMapping).filter(ColumnMapping.is_active == True).all()
-    return {"mappings": [
-        {
-            "id": m.id,
-            "mapping_name": m.mapping_name,
-            "source_columns": m.source_columns,
-            "target_columns": m.target_columns,
-            "created_at": m.created_at.isoformat()
-        } for m in mappings
-    ]}
-
-@app.post("/api/import")
-async def import_excel_file(
-    mapping_id: int = Form(...),
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db)
-):
-    """Import Excel file using specified mapping"""
-    
-    # Validate file
-    if not file.filename.endswith(('.xlsx', '.xls', '.csv')):
-        raise HTTPException(400, detail="Only Excel and CSV files are supported")
-    
-    # Get mapping configuration
-    mapping = db.query(ColumnMapping).filter(ColumnMapping.id == mapping_id).first()
-    if not mapping:
-        raise HTTPException(404, detail="Mapping configuration not found")
-    
-    # Create import job
-    job_id = str(uuid.uuid4())
-    job = ImportJob(
-        job_id=job_id,
-        mapping_id=mapping_id,
-        filename=file.filename,
-        status="pending"
-    )
-    db.add(job)
-    db.commit()
-    
-    # Process file asynchronously
-    await process_import_job(job_id, file, mapping, db)
-    
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
     return {
-        "status": "processing",
-        "job_id": job_id,
-        "message": "File import started"
+        "status": "healthy",
+        "version": "2.0.0",
+        "database": "connected" if supabase.client else "disconnected"
     }
 
-async def process_import_job(job_id: str, file: UploadFile, mapping: ColumnMapping, db: Session):
-    """Background job to process import"""
+@app.on_event("startup")
+async def startup_event():
+    """Initialize application on startup"""
+    print("🚀 Rangoon Middleware starting up...")
+    # Test database connection
     try:
-        # Update job status
-        job = db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
-        job.status = "processing"
-        db.commit()
-        
-        # Read and process file
-        contents = await file.read()
-        
-        if file.filename.endswith('.csv'):
-            df = process_csv_file(contents)
-        else:
-            df = process_excel_file(contents)
-        
-        job.total_records = len(df)
-        db.commit()
-        
-        # Apply mapping
-        mapped_data = mapping_engine.apply_mapping(df, {
-            "target_columns": mapping.target_columns,
-            "mapping_rules": mapping.mapping_rules
-        })
-        
-        # Validate data
-        valid_data = []
-        errors = []
-        
-        for i, row in enumerate(mapped_data):
-            validation = validate_business_rules(row, mapping.mapping_rules)
-            if validation["is_valid"]:
-                valid_data.append(row)
-            else:
-                errors.append({
-                    "row": i + 2,
-                    "data": row,
-                    "errors": validation["errors"]
-                })
-        
-        # Send to ERP
-        if valid_data:
-            erp_endpoint = mapping.mapping_rules.get("erp_endpoint", "customers")
-            erp_result = await erp_integration.send_to_erp(valid_data, erp_endpoint, mapping.id)
-            
-            job.erp_response = erp_result
-            job.processed_records = len(valid_data)
-        
-        job.failed_records = len(errors)
-        job.error_log = errors
-        job.status = "completed" if len(errors) < len(mapped_data) else "failed"
-        job.completed_at = datetime.utcnow()
-        db.commit()
-        
+        # Test Supabase connection
+        result = supabase.client.from_('profiles').select('count', count='exact').execute()
+        print("✅ Supabase connection established")
     except Exception as e:
-        # Update job with error
-        job = db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
-        job.status = "failed"
-        job.error_log = [{"error": str(e)}]
-        job.completed_at = datetime.utcnow()
-        db.commit()
+        print(f"❌ Database connection error: {e}")
 
-@app.get("/api/jobs/{job_id}")
-async def get_job_status(job_id: str, db: Session = Depends(get_db)):
-    """Get import job status"""
-    job = db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
-    if not job:
-        raise HTTPException(404, detail="Job not found")
-    
-    return {
-        "job_id": job.job_id,
-        "status": job.status,
-        "filename": job.filename,
-        "total_records": job.total_records,
-        "processed_records": job.processed_records,
-        "failed_records": job.failed_records,
-        "created_at": job.created_at.isoformat(),
-        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
-        "error_log": job.error_log
-    }
-
-@app.post("/api/erp/connection")
-async def configure_erp_connection(connection: ERPConnectionCreate, db: Session = Depends(get_db)):
-    """Configure ERP connection"""
-    
-    # Test connection first
-    test_result = await erp_integration.test_connection()
-    if not test_result["success"]:
-        raise HTTPException(400, detail=f"ERP connection test failed: {test_result['error']}")
-    
-    # Deactivate other connections
-    db.query(ERPConnection).update({"is_active": False})
-    
-    # Create new connection
-    erp_conn = ERPConnection(
-        name=connection.name,
-        base_url=connection.base_url,
-        api_key=connection.api_key,
-        endpoints=connection.endpoints,
-        is_active=True
-    )
-    
-    db.add(erp_conn)
-    db.commit()
-    
-    return {"status": "success", "message": "ERP connection configured successfully"}
-
-@app.get("/api/erp/test")
-async def test_erp_connection():
-    """Test ERP connection"""
-    result = await erp_integration.test_connection()
-    return result
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    print("🛑 Rangoon Middleware shutting down...")
 
 if __name__ == "__main__":
     import uvicorn
