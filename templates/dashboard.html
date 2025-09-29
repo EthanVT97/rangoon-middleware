@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rangoon Middleware Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Rangoon Middleware</h1>
+            <p>Custom Excel Import with ERP Integration</p>
+        </header>
+
+        <div class="dashboard-grid">
+            <!-- Quick Actions -->
+            <div class="card">
+                <h2>Quick Actions</h2>
+                <div class="action-buttons">
+                    <button onclick="location.href='/mapping/create'" class="btn btn-primary">
+                        Create New Mapping
+                    </button>
+                    <button onclick="showImportModal()" class="btn btn-secondary">
+                        Import Excel File
+                    </button>
+                    <button onclick="testERPConnection()" class="btn btn-info">
+                        Test ERP Connection
+                    </button>
+                </div>
+            </div>
+
+            <!-- Column Mappings -->
+            <div class="card">
+                <h2>Column Mappings</h2>
+                <div id="mappings-list">
+                    {% for mapping in mappings %}
+                    <div class="mapping-item">
+                        <h4>{{ mapping.mapping_name }}</h4>
+                        <p>Source Columns: {{ mapping.source_columns | length }}</p>
+                        <p>Target Columns: {{ mapping.target_columns | length }}</p>
+                        <button onclick="useMapping({{ mapping.id }})" class="btn btn-sm btn-outline">
+                            Use This Mapping
+                        </button>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Recent Jobs -->
+            <div class="card">
+                <h2>Recent Import Jobs</h2>
+                <div id="jobs-list">
+                    {% for job in recent_jobs %}
+                    <div class="job-item status-{{ job.status }}">
+                        <div class="job-header">
+                            <span class="job-filename">{{ job.filename }}</span>
+                            <span class="job-status">{{ job.status }}</span>
+                        </div>
+                        <div class="job-details">
+                            <span>Records: {{ job.processed_records }}/{{ job.total_records }}</span>
+                            <span>{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import Modal -->
+    <div id="importModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeImportModal()">&times;</span>
+            <h3>Import Excel File</h3>
+            <form id="importForm" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="mappingSelect">Select Mapping:</label>
+                    <select id="mappingSelect" required>
+                        <option value="">Choose a mapping...</option>
+                        {% for mapping in mappings %}
+                        <option value="{{ mapping.id }}">{{ mapping.mapping_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="excelFile">Excel File:</label>
+                    <input type="file" id="excelFile" accept=".xlsx,.xls,.csv" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Start Import</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
