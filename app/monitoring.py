@@ -1,118 +1,186 @@
 from typing import Dict, Any, List
 import asyncio
 from datetime import datetime, timedelta
+
 from .database.supabase_client import supabase
 from .websocket_manager import websocket_manager
 
 class LiveMonitor:
     def __init__(self):
         self.active_jobs = {}
+        self.metrics_cache = {}
+        self.cache_ttl = 30  # seconds
     
     async def start_job_monitoring(self, job_id: str, user_id: str):
         """Start monitoring a job"""
         self.active_jobs[job_id] = {
             "user_id": user_id,
             "start_time": datetime.now(),
-            "last_update": datetime.now()
+            "last_update": datetime.now(),
+            "progress": {
+                "total": 0,
+                "processed": 0,
+                "failed": 0
+            }
         }
         
-        # Subscribe to Supabase real-time updates
-        def handle_update(payload):
-            asyncio.create_task(
-                self._handle_job_update(payload, user_id)
+        # Send initial monitoring start message
+        await websocket_manager.broadcast_system_message(
+            f"Started monitoring job: {job_id}", 
+            user_id
+        )
+    
+    async def update_job_progress(self, job_id: str, progress: Dict[str, Any]):
+        """Update job progress and broadcast to client"""
+        if job_id in self.active_jobs:
+            user_id = self.active_jobs[job_id]["user_id"]
+            self.active_jobs[job_id]["progress"].update(progress)
+            self.active_jobs[job_id]["last_update"] = datetime.now()
+            
+            # Calculate percentage
+            total = progress.get("total", 0)
+            processed = progress.get("processed", 0)
+            percentage = (processed / total * 100) if total > 0 else 0
+            
+            progress_data = {
+                "job_id": job_id,
+                "percentage": round(percentage, 2),
+                "processed": processed,
+                "total": total,
+                "failed": progress.get("failed", 0)
+            }
+            
+            await websocket_manager.broadcast_progress_update(job_id, progress_data, user_id)
+    
+    async def complete_job_monitoring(self, job_id: str, final_status: str):
+        """Complete job monitoring"""
+        if job_id in self.active_jobs:
+            user_id = self.active_jobs[job_id]["user_id"]
+            
+            await websocket_manager.broadcast_system_message(
+                f"Job completed: {job_id} - Status: {final_status}", 
+                user_id
             )
-        
-        supabase.subscribe_to_job_updates(user_id, handle_update)
-    
-    async def _handle_job_update(self, payload: Dict[str, Any], user_id: str):
-        """Handle real-time job updates"""
-        try:
-            if payload.get("eventType") == "UPDATE":
-                record = payload.get("record", {})
-                
-                # Send update via WebSocket
-                await websocket_manager.broadcast_job_update(record, user_id)
-                
-                # Log the update
-                await self._log_monitoring_event(record, user_id)
-                
-        except Exception as e:
-            error_data = {
-                "timestamp": datetime.now().isoformat(),
-                "type": "monitoring_error",
-                "job_id": payload.get("record", {}).get("job_id"),
-                "error": str(e)
-            }
-            await websocket_manager.broadcast_error(error_data, user_id)
-    
-    async def _log_monitoring_event(self, job_data: Dict[str, Any], user_id: str):
-        """Log monitoring events for analytics"""
-        log_entry = {
-            "user_id": user_id,
-            "job_id": job_data.get("job_id"),
-            "event_type": "status_update",
-            "old_status": job_data.get("old_status"),
-            "new_status": job_data.get("status"),
-            "timestamp": datetime.now().isoformat(),
-            "metadata": {
-                "processed_records": job_data.get("processed_records"),
-                "failed_records": job_data.get("failed_records")
-            }
-        }
-        
-        try:
-            await supabase.client.from_("monitoring_logs").insert(log_entry).execute()
-        except Exception as e:
-            print(f"Monitoring log error: {e}")
+            
+            # Remove from active monitoring
+            del self.active_jobs[job_id]
     
     async def get_realtime_metrics(self, user_id: str) -> Dict[str, Any]:
-        """Get real-time metrics for dashboard"""
+        """Get real-time metrics for dashboard with caching"""
+        cache_key = f"metrics_{user_id}"
+        current_time = datetime.now()
+        
+        # Check cache
+        if (cache_key in self.metrics_cache and 
+            current_time - self.metrics_cache[cache_key]["timestamp"] < timedelta(seconds=self.cache_ttl)):
+            return self.metrics_cache[cache_key]["data"]
+        
         try:
-            # Get recent jobs
-            jobs = await supabase.get_user_jobs(user_id, limit=100)
+            # Get user metrics from database
+            metrics = await supabase.get_user_metrics(user_id)
             
-            # Calculate metrics
-            total_jobs = len(jobs)
-            completed_jobs = len([j for j in jobs if j.get("status") == "completed"])
-            failed_jobs = len([j for j in jobs if j.get("status") == "failed"])
-            processing_jobs = len([j for j in jobs if j.get("status") == "processing"])
+            # Get recent jobs for additional metrics
+            recent_jobs = await supabase.get_user_jobs(user_id, limit=20)
             
-            # Calculate success rate
-            success_rate = (completed_jobs / total_jobs * 100) if total_jobs > 0 else 0
+            # Calculate additional metrics
+            today = datetime.now().date()
+            today_jobs = [j for j in recent_jobs if 
+                         datetime.fromisoformat(j["created_at"]).date() == today]
             
-            # Recent errors
+            # Recent errors (last 24 hours)
             recent_errors = []
-            for job in jobs:
-                if job.get("error_log"):
-                    for error in job.get("error_log", [])[:5]:  # Last 5 errors
-                        recent_errors.append({
-                            "job_id": job.get("job_id"),
-                            "filename": job.get("filename"),
-                            "error": error,
-                            "timestamp": job.get("created_at")
-                        })
+            for job in recent_jobs:
+                if job.get("error_log") and len(job["error_log"]) > 0:
+                    job_time = datetime.fromisoformat(j["created_at"])
+                    if datetime.now() - job_time < timedelta(hours=24):
+                        for error in job["error_log"][:3]:  # Last 3 errors per job
+                            recent_errors.append({
+                                "job_id": job["job_id"],
+                                "filename": job["filename"],
+                                "error": error,
+                                "timestamp": job["created_at"]
+                            })
             
-            return {
-                "total_jobs": total_jobs,
-                "completed_jobs": completed_jobs,
-                "failed_jobs": failed_jobs,
-                "processing_jobs": processing_jobs,
-                "success_rate": round(success_rate, 2),
-                "recent_errors": recent_errors[-10:],  # Last 10 errors
-                "last_updated": datetime.now().isoformat()
+            # Prepare metrics data
+            metrics_data = {
+                **metrics,
+                "today_jobs": len(today_jobs),
+                "active_monitoring": len([j for j in self.active_jobs.values() if j["user_id"] == user_id]),
+                "recent_errors": recent_errors[:10],  # Last 10 errors
+                "last_updated": current_time.isoformat()
             }
+            
+            # Update cache
+            self.metrics_cache[cache_key] = {
+                "data": metrics_data,
+                "timestamp": current_time
+            }
+            
+            return metrics_data
             
         except Exception as e:
             return {
-                "error": str(e),
                 "total_jobs": 0,
                 "completed_jobs": 0,
                 "failed_jobs": 0,
                 "processing_jobs": 0,
                 "success_rate": 0,
+                "today_jobs": 0,
+                "active_monitoring": 0,
                 "recent_errors": [],
-                "last_updated": datetime.now().isoformat()
+                "last_updated": current_time.isoformat(),
+                "error": str(e)
             }
+    
+    async def get_job_details(self, job_id: str) -> Dict[str, Any]:
+        """Get detailed job information"""
+        try:
+            job = await supabase.get_job_by_id(job_id)
+            if not job:
+                return {"error": "Job not found"}
+            
+            # Add monitoring information if active
+            monitoring_info = {}
+            if job_id in self.active_jobs:
+                monitoring_info = {
+                    "is_active": True,
+                    "progress": self.active_jobs[job_id]["progress"],
+                    "start_time": self.active_jobs[job_id]["start_time"].isoformat(),
+                    "last_update": self.active_jobs[job_id]["last_update"].isoformat()
+                }
+            else:
+                monitoring_info = {"is_active": False}
+            
+            return {
+                **job,
+                **monitoring_info
+            }
+            
+        except Exception as e:
+            return {"error": str(e)}
+    
+    async def cleanup_old_monitoring(self):
+        """Clean up old monitoring sessions"""
+        current_time = datetime.now()
+        expired_jobs = []
+        
+        for job_id, job_info in self.active_jobs.items():
+            if current_time - job_info["last_update"] > timedelta(hours=1):  # 1 hour timeout
+                expired_jobs.append(job_id)
+        
+        for job_id in expired_jobs:
+            await self.complete_job_monitoring(job_id, "monitoring_timeout")
 
 # Global monitor instance
 live_monitor = LiveMonitor()
+
+# Background task for cleanup
+async def monitoring_cleanup_task():
+    """Background task to clean up old monitoring sessions"""
+    while True:
+        try:
+            await live_monitor.cleanup_old_monitoring()
+            await asyncio.sleep(300)  # Run every 5 minutes
+        except Exception as e:
+            print(f"Monitoring cleanup error: {e}")
+            await asyncio.sleep(60)
