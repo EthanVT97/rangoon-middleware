@@ -3,85 +3,98 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Create Column Mapping</title>
+    <title>Create Column Mapping - Rangoon Middleware</title>
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1>Create Column Mapping</h1>
-            <p>Define how Excel columns map to ERP fields</p>
+        <header class="dashboard-header">
+            <div class="header-content">
+                <h1>Create Column Mapping</h1>
+                <p>Define how Excel columns map to ERP fields</p>
+            </div>
+            <div class="user-info">
+                <button onclick="location.href='/'" class="btn btn-outline">← Back to Dashboard</button>
+            </div>
         </header>
 
         <div class="mapping-config">
             <form id="mappingForm">
-                <div class="form-group">
-                    <label for="mappingName">Mapping Name:</label>
-                    <input type="text" id="mappingName" required placeholder="e.g., Customer Import, Product Master">
-                </div>
-
-                <!-- Source Columns Configuration -->
+                <!-- Basic Information -->
                 <div class="config-section">
-                    <h3>Source Excel Columns</h3>
-                    <div id="sourceColumns">
-                        <div class="column-row">
-                            <input type="text" placeholder="Column Name (e.g., Customer_ID)" class="column-name">
-                            <select class="column-type">
-                                <option value="string">Text</option>
-                                <option value="number">Number</option>
-                                <option value="date">Date</option>
-                                <option value="boolean">Yes/No</option>
-                            </select>
-                            <input type="checkbox" class="column-required"> Required
-                            <button type="button" onclick="removeColumn(this)" class="btn btn-danger btn-sm">Remove</button>
-                        </div>
-                    </div>
-                    <button type="button" onclick="addSourceColumn()" class="btn btn-secondary">Add Column</button>
-                </div>
-
-                <!-- Target ERP Fields -->
-                <div class="config-section">
-                    <h3>Target ERP Fields</h3>
-                    <div id="targetColumns">
-                        <div class="column-row">
-                            <input type="text" placeholder="ERP Field Name (e.g., customer_code)" class="target-field">
-                            <select class="source-mapping">
-                                <option value="">-- Map to Source --</option>
-                            </select>
-                            <select class="transformation">
-                                <option value="">No Transformation</option>
-                                <option value="uppercase">Uppercase</option>
-                                <option value="lowercase">Lowercase</option>
-                                <option value="trim">Trim Spaces</option>
-                                <option value="phone_format">Phone Format</option>
-                                <option value="email_lower">Email Lowercase</option>
-                            </select>
-                            <input type="text" placeholder="Default Value" class="default-value">
-                            <input type="checkbox" class="field-required"> Required
-                            <button type="button" onclick="removeColumn(this)" class="btn btn-danger btn-sm">Remove</button>
-                        </div>
-                    </div>
-                    <button type="button" onclick="addTargetColumn()" class="btn btn-secondary">Add Field</button>
-                </div>
-
-                <!-- ERP Configuration -->
-                <div class="config-section">
-                    <h3>ERP Integration</h3>
+                    <h3>Basic Information</h3>
                     <div class="form-group">
-                        <label for="erpEndpoint">ERP API Endpoint:</label>
-                        <select id="erpEndpoint">
+                        <label for="mappingName">Mapping Name *</label>
+                        <input type="text" id="mappingName" required placeholder="e.g., Customer Import, Product Master">
+                    </div>
+                    <div class="form-group">
+                        <label for="mappingDescription">Description</label>
+                        <textarea id="mappingDescription" placeholder="Describe what this mapping is for..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="erpEndpoint">ERP Endpoint *</label>
+                        <select id="erpEndpoint" required>
+                            <option value="">Select ERP endpoint...</option>
                             <option value="customers">Customers API</option>
                             <option value="products">Products API</option>
                             <option value="sales">Sales API</option>
                             <option value="inventory">Inventory API</option>
+                            <option value="orders">Orders API</option>
                         </select>
                     </div>
                 </div>
 
-                <div class="form-actions">
-                    <button type="button" onclick="validateMapping()" class="btn btn-info">Validate Mapping</button>
-                    <button type="submit" class="btn btn-primary">Save Mapping</button>
-                    <button type="button" onclick="location.href='/'" class="btn btn-outline">Cancel</button>
+                <!-- Source Columns -->
+                <div class="config-section">
+                    <div class="section-header">
+                        <h3>Source Excel Columns</h3>
+                        <button type="button" onclick="addSourceColumn()" class="btn btn-secondary">+ Add Column</button>
+                    </div>
+                    <div id="sourceColumns" class="columns-container">
+                        <!-- Source columns will be added here dynamically -->
+                    </div>
+                </div>
+
+                <!-- Target ERP Fields -->
+                <div class="config-section">
+                    <div class="section-header">
+                        <h3>Target ERP Fields</h3>
+                        <button type="button" onclick="addTargetColumn()" class="btn btn-secondary">+ Add Field</button>
+                    </div>
+                    <div id="targetColumns" class="columns-container">
+                        <!-- Target fields will be added here dynamically -->
+                    </div>
+                </div>
+
+                <!-- Template Section -->
+                <div class="config-section">
+                    <h3>Quick Templates</h3>
+                    <div class="template-buttons">
+                        <button type="button" onclick="loadTemplate('customers')" class="btn btn-outline">
+                            Load Customer Template
+                        </button>
+                        <button type="button" onclick="loadTemplate('products')" class="btn btn-outline">
+                            Load Product Template
+                        </button>
+                        <button type="button" onclick="clearForm()" class="btn btn-outline">
+                            Clear Form
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Validation & Actions -->
+                <div class="config-section">
+                    <div class="validation-results" id="validationResults" style="display: none;">
+                        <h4>Validation Results</h4>
+                        <div id="validationErrors" class="errors"></div>
+                        <div id="validationWarnings" class="warnings"></div>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="button" onclick="validateMapping()" class="btn btn-info">Validate Mapping</button>
+                        <button type="submit" class="btn btn-primary">Save Mapping</button>
+                        <button type="button" onclick="location.href='/'" class="btn btn-outline">Cancel</button>
+                    </div>
                 </div>
             </form>
         </div>
@@ -89,4 +102,4 @@
 
     <script src="/static/js/mapping-config.js"></script>
 </body>
-                  </html>
+</html>
