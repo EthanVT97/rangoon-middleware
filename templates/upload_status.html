@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Import Status - Rangoon Middleware</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header class="dashboard-header">
+            <div class="header-content">
+                <h1>Import Status & Monitoring</h1>
+                <p>Real-time tracking of your file imports</p>
+            </div>
+            <div class="user-info">
+                <button onclick="location.href='/'" class="btn btn-outline">← Back to Dashboard</button>
+            </div>
+        </header>
+
+        <div class="status-content">
+            <!-- Live Metrics -->
+            <div class="metrics-section">
+                <h2>Live Metrics</h2>
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-value" id="totalJobs">0</div>
+                        <div class="metric-label">Total Jobs</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value" id="successRate">0%</div>
+                        <div class="metric-label">Success Rate</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value" id="activeJobs">0</div>
+                        <div class="metric-label">Active Now</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value" id="avgProcessingTime">0s</div>
+                        <div class="metric-label">Avg. Processing</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Active Jobs -->
+            <div class="active-jobs-section">
+                <h2>Active Import Jobs</h2>
+                <div id="activeJobsList" class="jobs-list">
+                    <div class="empty-state">No active jobs at the moment</div>
+                </div>
+            </div>
+
+            <!-- Recent Jobs Table -->
+            <div class="jobs-section">
+                <div class="section-header">
+                    <h2>Recent Import Jobs</h2>
+                    <div class="filter-controls">
+                        <select id="statusFilter">
+                            <option value="all">All Status</option>
+                            <option value="processing">Processing</option>
+                            <option value="completed">Completed</option>
+                            <option value="failed">Failed</option>
+                        </select>
+                        <input type="text" id="searchJobs" placeholder="Search jobs...">
+                    </div>
+                </div>
+                
+                <div class="jobs-table-container">
+                    <table class="jobs-table">
+                        <thead>
+                            <tr>
+                                <th>Job ID</th>
+                                <th>Filename</th>
+                                <th>Mapping</th>
+                                <th>Status</th>
+                                <th>Progress</th>
+                                <th>Records</th>
+                                <th>Started</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="jobsTableBody">
+                            <tr>
+                                <td colspan="8" class="loading">Loading jobs...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Error Summary -->
+            <div class="errors-section">
+                <h2>Recent Errors</h2>
+                <div id="recentErrors" class="errors-list">
+                    <div class="empty-state">No recent errors</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Job Details Modal -->
+    <div id="jobDetailsModal" class="modal">
+        <div class="modal-content large">
+            <span class="close" onclick="closeJobDetailsModal()">&times;</span>
+            <h3>Job Details</h3>
+            <div id="jobDetailsContent">
+                <!-- Job details will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- WebSocket Status -->
+    <div id="websocketStatus" class="websocket-status disconnected">
+        <span>🔴 Disconnected</span>
+    </div>
+
+    <script src="/static/js/upload-status.js"></script>
+</body>
+</html>
