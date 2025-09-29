@@ -1,12 +1,12 @@
 from fastapi import APIRouter
 
-# Import all route modules
+# Import route modules
 from . import auth_routes, dashboard_routes, mapping_routes, import_routes, monitoring_routes
 
-# Main router
+# Main API router
 api_router = APIRouter()
 
-# Include all routes
+# Include all route modules
 api_router.include_router(auth_routes.router, prefix="/auth", tags=["authentication"])
 api_router.include_router(dashboard_routes.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(mapping_routes.router, prefix="/mappings", tags=["column-mappings"])
