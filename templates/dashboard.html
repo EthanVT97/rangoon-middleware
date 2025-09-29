@@ -3,66 +3,88 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rangoon Middleware Dashboard</title>
+    <title>Rangoon Middleware - Dashboard</title>
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1>Rangoon Middleware</h1>
-            <p>Custom Excel Import with ERP Integration</p>
+        <header class="dashboard-header">
+            <div class="header-content">
+                <h1>Rangoon Middleware</h1>
+                <p>Advanced Excel Import with ERP Integration</p>
+            </div>
+            <div class="user-info">
+                <span id="userWelcome">Welcome, User</span>
+                <button id="logoutBtn" class="btn btn-outline">Logout</button>
+            </div>
         </header>
 
-        <div class="dashboard-grid">
+        <nav class="dashboard-nav">
+            <a href="/" class="nav-link active">Dashboard</a>
+            <a href="/mapping/create" class="nav-link">Create Mapping</a>
+            <a href="/upload/status" class="nav-link">Import Status</a>
+        </nav>
+
+        <div class="dashboard-content">
+            <!-- Quick Stats -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h3>Total Imports</h3>
+                    <div class="stat-value" id="totalImports">0</div>
+                    <div class="stat-trend">All Time</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Success Rate</h3>
+                    <div class="stat-value" id="successRate">0%</div>
+                    <div class="stat-trend" id="successTrend">Overall</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Today's Jobs</h3>
+                    <div class="stat-value" id="todayJobs">0</div>
+                    <div class="stat-trend" id="todayTrend">Today</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Active Monitoring</h3>
+                    <div class="stat-value" id="activeMonitoring">0</div>
+                    <div class="stat-trend">Live</div>
+                </div>
+            </div>
+
             <!-- Quick Actions -->
-            <div class="card">
+            <div class="actions-section">
                 <h2>Quick Actions</h2>
                 <div class="action-buttons">
-                    <button onclick="location.href='/mapping/create'" class="btn btn-primary">
-                        Create New Mapping
+                    <button onclick="location.href='/mapping/create'" class="btn btn-primary btn-large">
+                        📊 Create New Mapping
                     </button>
-                    <button onclick="showImportModal()" class="btn btn-secondary">
-                        Import Excel File
+                    <button onclick="showImportModal()" class="btn btn-secondary btn-large">
+                        📤 Import Excel File
                     </button>
-                    <button onclick="testERPConnection()" class="btn btn-info">
-                        Test ERP Connection
+                    <button onclick="testERPConnection()" class="btn btn-info btn-large">
+                        🔗 Test ERP Connection
                     </button>
                 </div>
             </div>
 
-            <!-- Column Mappings -->
-            <div class="card">
-                <h2>Column Mappings</h2>
-                <div id="mappings-list">
-                    {% for mapping in mappings %}
-                    <div class="mapping-item">
-                        <h4>{{ mapping.mapping_name }}</h4>
-                        <p>Source Columns: {{ mapping.source_columns | length }}</p>
-                        <p>Target Columns: {{ mapping.target_columns | length }}</p>
-                        <button onclick="useMapping({{ mapping.id }})" class="btn btn-sm btn-outline">
-                            Use This Mapping
-                        </button>
-                    </div>
-                    {% endfor %}
+            <!-- Recent Activity -->
+            <div class="activity-section">
+                <div class="section-header">
+                    <h2>Recent Import Jobs</h2>
+                    <a href="/upload/status" class="view-all">View All</a>
+                </div>
+                <div id="recentJobs" class="jobs-list">
+                    <div class="loading">Loading recent jobs...</div>
                 </div>
             </div>
 
-            <!-- Recent Jobs -->
-            <div class="card">
-                <h2>Recent Import Jobs</h2>
-                <div id="jobs-list">
-                    {% for job in recent_jobs %}
-                    <div class="job-item status-{{ job.status }}">
-                        <div class="job-header">
-                            <span class="job-filename">{{ job.filename }}</span>
-                            <span class="job-status">{{ job.status }}</span>
-                        </div>
-                        <div class="job-details">
-                            <span>Records: {{ job.processed_records }}/{{ job.total_records }}</span>
-                            <span>{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
-                        </div>
-                    </div>
-                    {% endfor %}
+            <!-- Your Mappings -->
+            <div class="mappings-section">
+                <div class="section-header">
+                    <h2>Your Column Mappings</h2>
+                    <a href="/mapping/create" class="view-all">Create New</a>
+                </div>
+                <div id="mappingsList" class="mappings-grid">
+                    <div class="loading">Loading mappings...</div>
                 </div>
             </div>
         </div>
@@ -73,23 +95,29 @@
         <div class="modal-content">
             <span class="close" onclick="closeImportModal()">&times;</span>
             <h3>Import Excel File</h3>
-            <form id="importForm" enctype="multipart/form-data">
+            <form id="importForm">
                 <div class="form-group">
                     <label for="mappingSelect">Select Mapping:</label>
                     <select id="mappingSelect" required>
-                        <option value="">Choose a mapping...</option>
-                        {% for mapping in mappings %}
-                        <option value="{{ mapping.id }}">{{ mapping.mapping_name }}</option>
-                        {% endfor %}
+                        <option value="">Choose a mapping configuration...</option>
                     </select>
                 </div>
                 <div class="form-group">
-                    <label for="excelFile">Excel File:</label>
+                    <label for="excelFile">Excel/CSV File:</label>
                     <input type="file" id="excelFile" accept=".xlsx,.xls,.csv" required>
+                    <div class="file-info">Supported formats: .xlsx, .xls, .csv (Max 50MB)</div>
                 </div>
-                <button type="submit" class="btn btn-primary">Start Import</button>
+                <div class="form-actions">
+                    <button type="button" onclick="closeImportModal()" class="btn btn-outline">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Start Import</button>
+                </div>
             </form>
         </div>
+    </div>
+
+    <!-- WebSocket Status -->
+    <div id="websocketStatus" class="websocket-status disconnected">
+        <span>🔴 Disconnected</span>
     </div>
 
     <script src="/static/js/dashboard.js"></script>
