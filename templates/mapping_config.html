@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Column Mapping</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Create Column Mapping</h1>
+            <p>Define how Excel columns map to ERP fields</p>
+        </header>
+
+        <div class="mapping-config">
+            <form id="mappingForm">
+                <div class="form-group">
+                    <label for="mappingName">Mapping Name:</label>
+                    <input type="text" id="mappingName" required placeholder="e.g., Customer Import, Product Master">
+                </div>
+
+                <!-- Source Columns Configuration -->
+                <div class="config-section">
+                    <h3>Source Excel Columns</h3>
+                    <div id="sourceColumns">
+                        <div class="column-row">
+                            <input type="text" placeholder="Column Name (e.g., Customer_ID)" class="column-name">
+                            <select class="column-type">
+                                <option value="string">Text</option>
+                                <option value="number">Number</option>
+                                <option value="date">Date</option>
+                                <option value="boolean">Yes/No</option>
+                            </select>
+                            <input type="checkbox" class="column-required"> Required
+                            <button type="button" onclick="removeColumn(this)" class="btn btn-danger btn-sm">Remove</button>
+                        </div>
+                    </div>
+                    <button type="button" onclick="addSourceColumn()" class="btn btn-secondary">Add Column</button>
+                </div>
+
+                <!-- Target ERP Fields -->
+                <div class="config-section">
+                    <h3>Target ERP Fields</h3>
+                    <div id="targetColumns">
+                        <div class="column-row">
+                            <input type="text" placeholder="ERP Field Name (e.g., customer_code)" class="target-field">
+                            <select class="source-mapping">
+                                <option value="">-- Map to Source --</option>
+                            </select>
+                            <select class="transformation">
+                                <option value="">No Transformation</option>
+                                <option value="uppercase">Uppercase</option>
+                                <option value="lowercase">Lowercase</option>
+                                <option value="trim">Trim Spaces</option>
+                                <option value="phone_format">Phone Format</option>
+                                <option value="email_lower">Email Lowercase</option>
+                            </select>
+                            <input type="text" placeholder="Default Value" class="default-value">
+                            <input type="checkbox" class="field-required"> Required
+                            <button type="button" onclick="removeColumn(this)" class="btn btn-danger btn-sm">Remove</button>
+                        </div>
+                    </div>
+                    <button type="button" onclick="addTargetColumn()" class="btn btn-secondary">Add Field</button>
+                </div>
+
+                <!-- ERP Configuration -->
+                <div class="config-section">
+                    <h3>ERP Integration</h3>
+                    <div class="form-group">
+                        <label for="erpEndpoint">ERP API Endpoint:</label>
+                        <select id="erpEndpoint">
+                            <option value="customers">Customers API</option>
+                            <option value="products">Products API</option>
+                            <option value="sales">Sales API</option>
+                            <option value="inventory">Inventory API</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" onclick="validateMapping()" class="btn btn-info">Validate Mapping</button>
+                    <button type="submit" class="btn btn-primary">Save Mapping</button>
+                    <button type="button" onclick="location.href='/'" class="btn btn-outline">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="/static/js/mapping-config.js"></script>
+</body>
+                  </html>
