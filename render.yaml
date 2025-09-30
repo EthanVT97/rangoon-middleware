@@ -2,21 +2,212 @@ services:
   - type: web
     name: rangoon-middleware
     env: python
-    plan: free
+    plan: standard  # Upgraded from free for better performance
+    region: singapore  # Added for better latency in Asia region
     buildCommand: |
+      pip install --upgrade pip
       pip install -r requirements.txt
+      python -c "import nltk; nltk.download('punkt')"  # For text processing if needed
     startCommand: |
-      uvicorn app.main:app --host 0.0.0.0 --port $PORT
+      uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2 --timeout-keep-alive 30
+    healthCheckPath: /health
+    autoDeploy: true
+    disk:
+      name: uploads
+      mountPath: /opt/render/uploads
+      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.0
+        value: 3.11.6
+      - key: PYTHONPATH
+        value: /opt/render/project/src
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      
+      # Security & Authentication
+      - key: SECRET_KEY
+        sync: false
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_EXPIRATION_MINUTES
+        value: 30
+      - key: REFRESH_TOKEN_EXPIRATION_DAYS
+        value: 7
+      
+      # Database
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_KEY
         sync: false
-      - key: SECRET_KEY
+      - key: DATABASE_URL
+        sync: false
+      - key: DB_POOL_SIZE
+        value: 5
+      - key: DB_MAX_OVERFLOW
+        value: 10
+      
+      # ERP Integration
+      - key: ERP_BASE_URL
+        sync: false
+      - key: ERP_API_KEY
+        sync: false
+      - key: ERP_TIMEOUT
+        value: 30
+      - key: ERP_MAX_RETRIES
+        value: 3
+      
+      # Circuit Breaker Configuration
+      - key: CIRCUIT_BREAKER_FAILURE_THRESHOLD
+        value: 5
+      - key: CIRCUIT_BREAKER_RECOVERY_TIMEOUT
+        value: 60
+      - key: CIRCUIT_BREAKER_EXPECTED_EXCEPTIONS
+        value: "Timeout,ConnectionError"
+      
+      # File Processing
+      - key: MAX_FILE_SIZE_MB
+        value: 50
+      - key: ALLOWED_FILE_TYPES
+        value: "xlsx,xls,csv"
+      - key: UPLOAD_DIR
+        value: /opt/render/uploads
+      - key: TEMP_DIR
+        value: /tmp
+      
+      # Rate Limiting
+      - key: RATE_LIMIT_REQUESTS
+        value: 100
+      - key: RATE_LIMIT_WINDOW
+        value: 900
+      - key: UPLOAD_RATE_LIMIT
+        value: 10
+      
+      # Caching
+      - key: REDIS_URL
+        sync: false
+      - key: CACHE_TTL
+        value: 300
+      
+      # Monitoring & Observability
+      - key: SENTRY_DSN
+        sync: false
+      - key: PROMETHEUS_MULTIPROC_DIR
+        value: /tmp/prometheus
+      - key: METRICS_ENABLED
+        value: true
+      
+      # WebSocket Configuration
+      - key: WEBSOCKET_PING_INTERVAL
+        value: 20
+      - key: WEBSOCKET_PING_TIMEOUT
+        value: 30
+      - key: WEBSOCKET_MAX_SIZE
+        value: 16777216
+      
+      # Security Headers
+      - key: CORS_ORIGINS
+        value: "https://your-frontend-domain.com,https://www.your-frontend-domain.com"
+      - key: CSP_DIRECTIVES
+        value: "default-src 'self'; script-src 'self' 'unsafe-inline'"
+      
+      # Performance Tuning
+      - key: UVICORN_WORKERS
+        value: 2
+      - key: UVICORN_TIMEOUT
+        value: 120
+      - key: UVICORN_KEEP_ALIVE
+        value: 5
+
+  # Background Worker for Async Tasks (New)
+  - type: worker
+    name: rangoon-worker
+    env: python
+    plan: standard
+    region: singapore
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: |
+      celery -A app.celery_app worker --loglevel=info --concurrency=2
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.6
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: REDIS_URL
         sync: false
       - key: ERP_BASE_URL
         sync: false
       - key: ERP_API_KEY
         sync: false
+
+  # Redis Service for Caching & Sessions (New)
+  - type: redis
+    name: rangoon-redis
+    plan: free
+    region: singapore
+    ipAllowList: 
+      - source: 0.0.0.0/0
+        description: everywhere
+    maxmemoryPolicy: allkeys-lru
+
+# Database Configuration (If using Render PostgreSQL)
+# databases:
+#   - name: rangoon-db
+#     plan: free
+#     region: singapore
+#     databaseName: rangoon_middleware
+#     user: rangoon_user
+
+# Environment Groups for shared variables
+envVarGroups:
+  - name: security-config
+    envVars:
+      - key: SECRET_KEY
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: ERP_API_KEY
+        sync: false
+  
+  - name: external-services
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: ERP_BASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+  
+  - name: performance-config
+    envVars:
+      - key: UVICORN_WORKERS
+        value: 2
+      - key: DB_POOL_SIZE
+        value: 5
+      - key: CACHE_TTL
+        value: 300
+      - key: RATE_LIMIT_REQUESTS
+        value: 100
+
+# Custom Domains (Uncomment and configure as needed)
+# domains:
+#   - domain: api.yourdomain.com
+#     type: ALIAS
+#   - domain: middleware.yourdomain.com
+#     type: ALIAS
+
+# Build Filters (Optional)
+# buildFilter:
+#   paths:
+#     - src/**
+#     - app/**
+#     - requirements.txt
