@@ -11,7 +11,7 @@
         <header class="dashboard-header">
             <div class="header-content">
                 <h1>Create Column Mapping</h1>
-                <p>Define how Excel columns map to ERP fields</p>
+                <p>Define how Excel columns map to ERPNext fields</p>
             </div>
             <div class="user-info">
                 <button onclick="location.href='/'" class="btn btn-outline">← Back to Dashboard</button>
@@ -32,15 +32,20 @@
                         <textarea id="mappingDescription" placeholder="Describe what this mapping is for..."></textarea>
                     </div>
                     <div class="form-group">
-                        <label for="erpEndpoint">ERP Endpoint *</label>
-                        <select id="erpEndpoint" required>
-                            <option value="">Select ERP endpoint...</option>
-                            <option value="customers">Customers API</option>
-                            <option value="products">Products API</option>
-                            <option value="sales">Sales API</option>
-                            <option value="inventory">Inventory API</option>
-                            <option value="orders">Orders API</option>
+                        <label for="erpEndpoint">ERPNext Endpoint *</label>
+                        <select id="erpEndpoint" required onchange="onEndpointChange()">
+                            <option value="">Select ERPNext endpoint...</option>
+                            <option value="Customer">Customers</option>
+                            <option value="Item">Items</option>
+                            <option value="Sales Order">Sales Orders</option>
+                            <option value="Sales Invoice">Sales Invoices</option>
+                            <option value="Payment Entry">Payment Entries</option>
+                            <option value="Bin">Stock Information</option>
                         </select>
+                        <div class="field-info" id="endpointInfo" style="display: none;">
+                            <small id="endpointDescription"></small>
+                            <div id="requiredFields" class="required-fields"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -50,35 +55,84 @@
                         <h3>Source Excel Columns</h3>
                         <button type="button" onclick="addSourceColumn()" class="btn btn-secondary">+ Add Column</button>
                     </div>
+                    <p class="section-description">Define the columns in your Excel/CSV file</p>
                     <div id="sourceColumns" class="columns-container">
                         <!-- Source columns will be added here dynamically -->
                     </div>
                 </div>
 
-                <!-- Target ERP Fields -->
+                <!-- Target ERPNext Fields -->
                 <div class="config-section">
                     <div class="section-header">
-                        <h3>Target ERP Fields</h3>
+                        <h3>Target ERPNext Fields</h3>
                         <button type="button" onclick="addTargetColumn()" class="btn btn-secondary">+ Add Field</button>
                     </div>
+                    <p class="section-description">Map to ERPNext document fields. Required fields are marked with *</p>
                     <div id="targetColumns" class="columns-container">
                         <!-- Target fields will be added here dynamically -->
                     </div>
                 </div>
 
-                <!-- Template Section -->
+                <!-- Transformation Rules -->
                 <div class="config-section">
-                    <h3>Quick Templates</h3>
+                    <h3>Transformation Rules</h3>
+                    <div class="transformations-info">
+                        <p>Available transformations for ERPNext data formatting:</p>
+                        <div class="transformations-grid">
+                            <div class="transformation-item">
+                                <strong>Text:</strong> uppercase, lowercase, trim, remove_special_chars
+                            </div>
+                            <div class="transformation-item">
+                                <strong>Numbers:</strong> to_float, to_integer, round_decimal, currency_format
+                            </div>
+                            <div class="transformation-item">
+                                <strong>Dates:</strong> date_iso, date_us, extract_year, extract_month
+                            </div>
+                            <div class="transformation-item">
+                                <strong>ERPNext:</strong> erpnext_customer_code, erpnext_item_code, erpnext_quantity
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ERPNext Template Section -->
+                <div class="config-section">
+                    <h3>ERPNext Quick Templates</h3>
                     <div class="template-buttons">
-                        <button type="button" onclick="loadTemplate('customers')" class="btn btn-outline">
-                            Load Customer Template
+                        <button type="button" onclick="loadTemplate('Customer')" class="btn btn-outline">
+                            👥 Customer Template
                         </button>
-                        <button type="button" onclick="loadTemplate('products')" class="btn btn-outline">
-                            Load Product Template
+                        <button type="button" onclick="loadTemplate('Item')" class="btn btn-outline">
+                            📦 Item Template
+                        </button>
+                        <button type="button" onclick="loadTemplate('Sales Order')" class="btn btn-outline">
+                            🛒 Sales Order Template
+                        </button>
+                        <button type="button" onclick="loadTemplate('Sales Invoice')" class="btn btn-outline">
+                            🧾 Sales Invoice Template
+                        </button>
+                        <button type="button" onclick="loadTemplate('Payment Entry')" class="btn btn-outline">
+                            💰 Payment Template
                         </button>
                         <button type="button" onclick="clearForm()" class="btn btn-outline">
-                            Clear Form
+                            🗑️ Clear Form
                         </button>
+                    </div>
+                </div>
+
+                <!-- Field Mapping Preview -->
+                <div class="config-section">
+                    <h3>Field Mapping Preview</h3>
+                    <div class="mapping-preview" id="mappingPreview">
+                        <div class="preview-header">
+                            <span class="preview-source">Excel Column</span>
+                            <span class="preview-arrow">→</span>
+                            <span class="preview-target">ERPNext Field</span>
+                            <span class="preview-transformations">Transformations</span>
+                        </div>
+                        <div id="previewContent" class="preview-content">
+                            <div class="preview-empty">No mappings defined yet</div>
+                        </div>
                     </div>
                 </div>
 
@@ -88,15 +142,64 @@
                         <h4>Validation Results</h4>
                         <div id="validationErrors" class="errors"></div>
                         <div id="validationWarnings" class="warnings"></div>
+                        <div id="validationInfo" class="info"></div>
                     </div>
                     
                     <div class="form-actions">
-                        <button type="button" onclick="validateMapping()" class="btn btn-info">Validate Mapping</button>
+                        <button type="button" onclick="previewMapping()" class="btn btn-info">Preview Mapping</button>
+                        <button type="button" onclick="validateMapping()" class="btn btn-warning">Validate Mapping</button>
                         <button type="submit" class="btn btn-primary">Save Mapping</button>
                         <button type="button" onclick="location.href='/'" class="btn btn-outline">Cancel</button>
                     </div>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Transformation Modal -->
+    <div id="transformationModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeTransformationModal()">&times;</span>
+            <h3>Add Transformation</h3>
+            <div class="form-group">
+                <label for="transformationType">Transformation Type:</label>
+                <select id="transformationType" onchange="onTransformationTypeChange()">
+                    <option value="">Select transformation type...</option>
+                    <optgroup label="Text Transformations">
+                        <option value="uppercase">Uppercase</option>
+                        <option value="lowercase">Lowercase</option>
+                        <option value="title_case">Title Case</option>
+                        <option value="trim">Trim Whitespace</option>
+                        <option value="remove_special_chars">Remove Special Characters</option>
+                    </optgroup>
+                    <optgroup label="Numeric Transformations">
+                        <option value="to_float">Convert to Float</option>
+                        <option value="to_integer">Convert to Integer</option>
+                        <option value="round_decimal">Round Decimal</option>
+                        <option value="currency_format">Currency Format</option>
+                    </optgroup>
+                    <optgroup label="Date Transformations">
+                        <option value="date_iso">ISO Date Format</option>
+                        <option value="date_us">US Date Format</option>
+                        <option value="extract_year">Extract Year</option>
+                        <option value="extract_month">Extract Month</option>
+                    </optgroup>
+                    <optgroup label="ERPNext Transformations">
+                        <option value="erpnext_customer_code">ERPNext Customer Code</option>
+                        <option value="erpnext_item_code">ERPNext Item Code</option>
+                        <option value="erpnext_quantity">ERPNext Quantity</option>
+                        <option value="erpnext_rate">ERPNext Rate</option>
+                        <option value="erpnext_uom">ERPNext UOM</option>
+                    </optgroup>
+                </select>
+            </div>
+            <div id="transformationParams" class="transformation-params" style="display: none;">
+                <!-- Parameters will be shown based on transformation type -->
+            </div>
+            <div class="form-actions">
+                <button type="button" onclick="closeTransformationModal()" class="btn btn-outline">Cancel</button>
+                <button type="button" onclick="addTransformation()" class="btn btn-primary">Add Transformation</button>
+            </div>
         </div>
     </div>
 
