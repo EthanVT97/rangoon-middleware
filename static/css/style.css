@@ -629,6 +629,482 @@ body {
     border: 2px dashed #dee2e6;
 }
 
+/* ==================== */
+/* ENHANCED STYLES FOR RANGOON MIDDLEWARE */
+/* ==================== */
+
+/* WebSocket Specific Styles */
+.websocket-connections {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+}
+
+.connection-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.connection-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border-left: 4px solid #28a745;
+    transition: all 0.3s ease;
+}
+
+.connection-item.disconnected {
+    border-left-color: #dc3545;
+    opacity: 0.6;
+}
+
+.connection-item:hover {
+    transform: translateX(5px);
+}
+
+.connection-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.connection-id {
+    font-weight: bold;
+    color: #2c3e50;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+}
+
+.connection-time {
+    font-size: 12px;
+    color: #6c757d;
+}
+
+.connection-actions {
+    display: flex;
+    gap: 8px;
+}
+
+/* Enhanced Progress Indicators */
+.progress-container {
+    margin: 15px 0;
+}
+
+.progress-info {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+    font-size: 14px;
+}
+
+.progress-bar.animated {
+    background: linear-gradient(90deg, #3498db, #2ecc71, #3498db);
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+/* Real-time status pulses */
+.status-pulse {
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.7; }
+    100% { opacity: 1; }
+}
+
+/* Circuit Breaker Status */
+.circuit-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+.circuit-closed {
+    background: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.circuit-open {
+    background: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f1b0b7;
+}
+
+.circuit-half-open {
+    background: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeaa7;
+}
+
+.circuit-status-icon {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    animation: circuit-pulse 1.5s infinite;
+}
+
+.circuit-closed .circuit-status-icon {
+    background: #28a745;
+}
+
+.circuit-open .circuit-status-icon {
+    background: #dc3545;
+}
+
+.circuit-half-open .circuit-status-icon {
+    background: #ffc107;
+}
+
+@keyframes circuit-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* Enhanced File Upload States */
+.upload-zone {
+    border: 2px dashed #3498db;
+    border-radius: 8px;
+    padding: 40px;
+    text-align: center;
+    background: #f8f9fa;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    margin-bottom: 20px;
+}
+
+.upload-zone:hover {
+    border-color: #2980b9;
+    background: #e9ecef;
+}
+
+.upload-zone.dragover {
+    border-color: #2ecc71;
+    background: #d4edda;
+    transform: scale(1.02);
+}
+
+.upload-zone.error {
+    border-color: #e74c3c;
+    background: #f8d7da;
+}
+
+.upload-zone.has-file {
+    border-color: #28a745;
+    background: #d4edda;
+}
+
+.file-processing-steps {
+    display: flex;
+    justify-content: space-between;
+    margin: 20px 0;
+    position: relative;
+}
+
+.file-processing-steps::before {
+    content: '';
+    position: absolute;
+    top: 15px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: #e9ecef;
+    z-index: 1;
+}
+
+.processing-step {
+    text-align: center;
+    flex: 1;
+    position: relative;
+    z-index: 2;
+}
+
+.step-indicator {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: #e9ecef;
+    margin: 0 auto 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    color: #6c757d;
+    border: 2px solid white;
+    transition: all 0.3s ease;
+}
+
+.step-indicator.active {
+    background: #3498db;
+    color: white;
+    transform: scale(1.1);
+}
+
+.step-indicator.completed {
+    background: #28a745;
+    color: white;
+}
+
+.step-label {
+    font-size: 12px;
+    color: #6c757d;
+    font-weight: 500;
+}
+
+.step-indicator.active ~ .step-indicator {
+    background: #e9ecef;
+    color: #6c757d;
+}
+
+/* Real-time Monitoring Dashboard */
+.monitoring-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.monitoring-card {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    border-top: 4px solid #3498db;
+}
+
+.monitoring-card.performance {
+    border-top-color: #28a745;
+}
+
+.monitoring-card.errors {
+    border-top-color: #dc3545;
+}
+
+.monitoring-card.connections {
+    border-top-color: #17a2b8;
+}
+
+.monitoring-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.monitoring-header h3 {
+    color: #2c3e50;
+    font-size: 1.1rem;
+}
+
+.monitoring-value {
+    font-size: 2rem;
+    font-weight: bold;
+    color: #2c3e50;
+    margin-bottom: 10px;
+}
+
+.monitoring-trend {
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.trend-up {
+    color: #28a745;
+}
+
+.trend-down {
+    color: #dc3545;
+}
+
+/* Real-time Events Feed */
+.events-feed {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.event-item {
+    padding: 15px 20px;
+    border-bottom: 1px solid #e9ecef;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    transition: background-color 0.2s ease;
+}
+
+.event-item:hover {
+    background: #f8f9fa;
+}
+
+.event-item:last-child {
+    border-bottom: none;
+}
+
+.event-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.event-icon.info {
+    background: #d1ecf1;
+    color: #0c5460;
+}
+
+.event-icon.success {
+    background: #d4edda;
+    color: #155724;
+}
+
+.event-icon.warning {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.event-icon.error {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.event-content {
+    flex: 1;
+}
+
+.event-message {
+    font-weight: 500;
+    color: #2c3e50;
+    margin-bottom: 2px;
+}
+
+.event-time {
+    font-size: 12px;
+    color: #6c757d;
+}
+
+/* Batch Processing Status */
+.batch-status {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+}
+
+.batch-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.batch-progress {
+    margin-bottom: 15px;
+}
+
+.batch-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 15px;
+    text-align: center;
+}
+
+.batch-stat {
+    padding: 10px;
+    background: #f8f9fa;
+    border-radius: 6px;
+}
+
+.batch-stat-value {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #2c3e50;
+    margin-bottom: 5px;
+}
+
+.batch-stat-label {
+    font-size: 0.8rem;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Dark Mode Support */
+@media (prefers-color-scheme: dark) {
+    .dark-mode {
+        background-color: #1a1a1a;
+        color: #e9ecef;
+    }
+    
+    .dark-mode .stat-card,
+    .dark-mode .actions-section,
+    .dark-mode .job-item,
+    .dark-mode .mapping-item,
+    .dark-mode .monitoring-card,
+    .dark-mode .events-feed,
+    .dark-mode .batch-status,
+    .dark-mode .websocket-connections {
+        background: #2d3748;
+        color: #e9ecef;
+        border-color: #4a5568;
+    }
+    
+    .dark-mode .dashboard-header,
+    .dark-mode .dashboard-nav {
+        background: #2d3748;
+        border-color: #4a5568;
+    }
+    
+    .dark-mode .stat-value,
+    .dark-mode .metric-value,
+    .dark-mode .monitoring-value,
+    .dark-mode .batch-stat-value {
+        color: #e9ecef;
+    }
+    
+    .dark-mode .stat-card h3,
+    .dark-mode .metric-label,
+    .dark-mode .monitoring-header h3,
+    .dark-mode .batch-stat-label {
+        color: #a0aec0;
+    }
+    
+    .dark-mode .upload-zone {
+        background: #2d3748;
+        border-color: #4a5568;
+    }
+    
+    .dark-mode .connection-item {
+        background: #4a5568;
+    }
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
     .container {
@@ -673,4 +1149,96 @@ body {
         width: 95%;
         padding: 20px;
     }
+    
+    /* Mobile-specific styles for WebSocket */
+    .websocket-status {
+        bottom: 10px;
+        right: 10px;
+        font-size: 10px;
+        padding: 8px 12px;
     }
+    
+    .monitoring-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .file-processing-steps {
+        flex-direction: column;
+        gap: 15px;
+    }
+    
+    .file-processing-steps::before {
+        display: none;
+    }
+    
+    .processing-step {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        text-align: left;
+    }
+    
+    .step-indicator {
+        margin: 0;
+        flex-shrink: 0;
+    }
+    
+    .connection-item {
+        flex-direction: column;
+        gap: 10px;
+        align-items: flex-start;
+    }
+    
+    .connection-actions {
+        align-self: flex-end;
+    }
+}
+
+@media (max-width: 480px) {
+    .dashboard-header h1 {
+        font-size: 1.5rem;
+    }
+    
+    .stat-value {
+        font-size: 2rem;
+    }
+    
+    .metric-value {
+        font-size: 2rem;
+    }
+    
+    .monitoring-value {
+        font-size: 1.5rem;
+    }
+    
+    .mappings-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .batch-stats {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Print Styles */
+@media print {
+    .dashboard-nav,
+    .action-buttons,
+    .websocket-status,
+    .btn {
+        display: none !important;
+    }
+    
+    .stat-card,
+    .job-item,
+    .mapping-item {
+        break-inside: avoid;
+        box-shadow: none !important;
+        border: 1px solid #ddd !important;
+    }
+    
+    body {
+        background: white !important;
+        color: black !important;
+    }
+}
