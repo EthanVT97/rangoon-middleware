@@ -14,6 +14,7 @@ import logging
 from contextlib import asynccontextmanager
 from decouple import config
 import asyncio
+from datetime import datetime
 
 from .routes import api_router
 from .database.supabase_client import supabase
@@ -38,6 +39,11 @@ ALLOWED_ORIGINS = config("ALLOWED_ORIGINS", default="http://localhost:3000,http:
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1").split(",")
 API_PREFIX = config("API_PREFIX", default="/api")
 
+# ERPNext Test Configuration
+ERPNEXT_TEST_URL = config("ERPNEXT_TEST_URL", default="https://rangoontesting.s.erpnext.com")
+ERPNEXT_TEST_USERNAME = config("ERPNEXT_TEST_USERNAME", default="rangoon")
+ERPNEXT_TEST_PASSWORD = config("ERPNEXT_TEST_PASSWORD", default="rangoon@123")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Enhanced lifespan context manager for startup/shutdown events"""
@@ -53,14 +59,6 @@ async def lifespan(app: FastAPI):
                 # Test Supabase connection with actual query
                 result = supabase.client.from_('profiles').select('id', count='exact').limit(1).execute()
                 logger.info("✅ Supabase connection established")
-                
-                # Test ERP connection if configured
-                erp_status = await erp_integration.test_connection()
-                if erp_status["success"]:
-                    logger.info("✅ ERP connection established")
-                else:
-                    logger.warning(f"⚠️ ERP connection failed: {erp_status.get('error', 'Unknown error')}")
-                
                 break
                 
             except Exception as e:
@@ -71,6 +69,9 @@ async def lifespan(app: FastAPI):
                     wait_time = 2 ** attempt  # Exponential backoff
                     logger.warning(f"⚠️ Database connection attempt {attempt + 1} failed, retrying in {wait_time}s...")
                     await asyncio.sleep(wait_time)
+        
+        # Initialize ERPNext integration with test credentials
+        await initialize_erpnext_integration()
         
         # Initialize background tasks
         asyncio.create_task(background_health_check())
@@ -97,10 +98,40 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ Shutdown error: {e}")
 
+async def initialize_erpnext_integration():
+    """Initialize ERPNext integration with test credentials"""
+    try:
+        # Check if ERPNext configuration exists in environment
+        erpnext_api_key = config("ERPNEXT_API_KEY", default=None)
+        erpnext_base_url = config("ERPNEXT_BASE_URL", default=ERPNEXT_TEST_URL)
+        erpnext_username = config("ERPNEXT_USERNAME", default=ERPNEXT_TEST_USERNAME)
+        erpnext_password = config("ERPNEXT_PASSWORD", default=ERPNEXT_TEST_PASSWORD)
+        
+        if erpnext_api_key and erpnext_base_url:
+            # Initialize with environment variables
+            await erp_integration.initialize_erpnext(
+                base_url=erpnext_base_url,
+                api_key=erpnext_api_key,
+                username=erpnext_username,
+                password=erpnext_password
+            )
+            
+            # Test connection
+            erp_status = await erp_integration.test_connection()
+            if erp_status["success"]:
+                logger.info("✅ ERPNext connection established with environment config")
+            else:
+                logger.warning(f"⚠️ ERPNext connection failed: {erp_status.get('error', 'Unknown error')}")
+        else:
+            logger.info("ℹ️ ERPNext configuration not found in environment. Will use manual setup.")
+            
+    except Exception as e:
+        logger.error(f"❌ ERPNext initialization failed: {e}")
+
 # Create FastAPI app with lifespan
 app = FastAPI(
     title="Rangoon Middleware",
-    description="Advanced Excel Import with Custom Mapping & ERP Integration",
+    description="Advanced Excel Import with Custom Mapping & ERPNext Integration",
     version="2.0.0",
     docs_url=f"{API_PREFIX}/docs",
     redoc_url=f"{API_PREFIX}/redoc",
@@ -243,13 +274,23 @@ async def upload_status_page(request: Request):
         "api_prefix": API_PREFIX
     })
 
+@app.get("/erpnext/setup", response_class=HTMLResponse)
+async def erpnext_setup_page(request: Request):
+    """ERPNext connection setup page"""
+    return templates.TemplateResponse("erpnext_setup.html", {
+        "request": request,
+        "api_prefix": API_PREFIX,
+        "test_url": ERPNEXT_TEST_URL,
+        "test_username": ERPNEXT_TEST_USERNAME
+    })
+
 @app.get("/health", tags=["Monitoring"])
 async def health_check():
     """Comprehensive health check endpoint"""
     health_status = {
         "status": "healthy",
         "version": "2.0.0",
-        "timestamp": time.time(),
+        "timestamp": datetime.now().isoformat(),
         "services": {}
     }
     
@@ -267,14 +308,17 @@ async def health_check():
         }
         health_status["status"] = "degraded"
     
-    # ERP health check
+    # ERPNext health check
     try:
         erp_status = await erp_integration.test_connection()
-        health_status["services"]["erp"] = erp_status
+        health_status["services"]["erpnext"] = erp_status
         if not erp_status["success"]:
             health_status["status"] = "degraded"
+            health_status["services"]["erpnext"]["status"] = "unhealthy"
+        else:
+            health_status["services"]["erpnext"]["status"] = "healthy"
     except Exception as e:
-        health_status["services"]["erp"] = {
+        health_status["services"]["erpnext"] = {
             "status": "unhealthy",
             "error": str(e)
         }
@@ -303,7 +347,7 @@ async def system_status():
             "connected": supabase.client is not None,
             "provider": "Supabase"
         },
-        "erp_integration": await erp_integration.get_system_status(),
+        "erpnext_integration": await erp_integration.get_system_status(),
         "websockets": {
             "active_connections": len(websocket_manager.active_connections),
             "manager_status": "running"
@@ -312,6 +356,116 @@ async def system_status():
     }
     
     return status
+
+@app.post(f"{API_PREFIX}/erpnext/test-connection", tags=["ERPNext"])
+async def test_erpnext_connection(request: Request):
+    """Test ERPNext connection with provided credentials"""
+    try:
+        data = await request.json()
+        
+        # Validate required fields
+        if not data.get("base_url") or not data.get("api_key"):
+            raise HTTPException(
+                status_code=400,
+                detail="base_url and api_key are required"
+            )
+        
+        # Test connection using auth handler
+        connection_test = await auth_handler.test_erpnext_connection({
+            "base_url": data["base_url"],
+            "api_key": data["api_key"],
+            "username": data.get("username"),
+            "password": data.get("password")
+        })
+        
+        return {
+            "success": connection_test["success"],
+            "message": "Connection test completed",
+            "details": connection_test
+        }
+        
+    except Exception as e:
+        logger.error(f"ERPNext connection test failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Connection test failed: {str(e)}"
+        )
+
+@app.post(f"{API_PREFIX}/erpnext/initialize", tags=["ERPNext"])
+async def initialize_erpnext(request: Request):
+    """Initialize ERPNext integration with provided credentials"""
+    try:
+        data = await request.json()
+        
+        # Validate required fields
+        if not data.get("base_url") or not data.get("api_key"):
+            raise HTTPException(
+                status_code=400,
+                detail="base_url and api_key are required"
+            )
+        
+        # Initialize ERPNext integration
+        success = await erp_integration.initialize_erpnext(
+            base_url=data["base_url"],
+            api_key=data["api_key"],
+            username=data.get("username"),
+            password=data.get("password")
+        )
+        
+        if success:
+            # Test the connection
+            connection_status = await erp_integration.test_connection()
+            
+            return {
+                "success": True,
+                "message": "ERPNext integration initialized successfully",
+                "connection_status": connection_status
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to initialize ERPNext integration"
+            )
+        
+    except Exception as e:
+        logger.error(f"ERPNext initialization failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Initialization failed: {str(e)}"
+        )
+
+@app.get(f"{API_PREFIX}/erpnext/endpoints", tags=["ERPNext"])
+async def get_erpnext_endpoints():
+    """Get available ERPNext endpoints and their configurations"""
+    from .models import ERPNextEndpoint
+    
+    endpoints_info = {}
+    
+    for endpoint in ERPNextEndpoint:
+        endpoints_info[endpoint.value] = {
+            "description": f"ERPNext {endpoint.value} endpoint",
+            "supported_operations": ["CREATE", "GET"],
+            "required_fields": get_required_fields_for_endpoint(endpoint)
+        }
+    
+    return {
+        "success": True,
+        "endpoints": endpoints_info,
+        "total_endpoints": len(endpoints_info)
+    }
+
+def get_required_fields_for_endpoint(endpoint):
+    """Get required fields for each ERPNext endpoint"""
+    required_fields = {
+        "Item": ["item_code", "item_name"],
+        "Customer": ["customer_name", "customer_group"],
+        "Sales Order": ["customer", "items"],
+        "Sales Invoice": ["customer", "items"],
+        "Payment Entry": ["payment_type", "party", "paid_amount"],
+        "Bin": []  # Stock information - usually read-only
+    }
+    
+    return required_fields.get(endpoint.value, [])
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
@@ -333,13 +487,14 @@ async def background_health_check():
             except Exception as e:
                 logger.error(f"Background health check - Database error: {e}")
             
-            # Test ERP connection
+            # Test ERP connection if initialized
             try:
-                erp_status = await erp_integration.test_connection()
-                if not erp_status["success"]:
-                    logger.warning(f"Background health check - ERP connection issue: {erp_status.get('error')}")
+                if erp_integration.erpnext_client:
+                    erp_status = await erp_integration.test_connection()
+                    if not erp_status["success"]:
+                        logger.warning(f"Background health check - ERPNext connection issue: {erp_status.get('error')}")
             except Exception as e:
-                logger.error(f"Background health check - ERP error: {e}")
+                logger.error(f"Background health check - ERPNext error: {e}")
                 
         except asyncio.CancelledError:
             break
