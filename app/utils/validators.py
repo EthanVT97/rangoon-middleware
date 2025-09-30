@@ -8,6 +8,8 @@ import phonenumbers
 from email_validator import validate_email, EmailNotValidError
 import pandas as pd
 
+from .models import ERPNextEndpoint, ERPNextDocStatus
+
 logger = logging.getLogger(__name__)
 
 class ValidationSeverity(Enum):
@@ -115,6 +117,7 @@ class Validator:
     def __init__(self):
         self.rules: Dict[str, ValidationRule] = {}
         self._initialize_builtin_rules()
+        self._initialize_erpnext_rules()
     
     def _initialize_builtin_rules(self):
         """Initialize built-in validation rules"""
@@ -171,6 +174,33 @@ class Validator:
                           "Value is not in allowed list", ValidationSeverity.ERROR)
         self.register_rule("not_in_list", self._validate_not_in_list,
                           "Value is in disallowed list", ValidationSeverity.ERROR)
+    
+    def _initialize_erpnext_rules(self):
+        """Initialize ERPNext specific validation rules"""
+        # ERPNext specific rules
+        self.register_rule("erpnext_customer_code", self._validate_erpnext_customer_code,
+                          "Customer code must be alphanumeric and 3-50 characters", ValidationSeverity.ERROR)
+        
+        self.register_rule("erpnext_item_code", self._validate_erpnext_item_code,
+                          "Item code must be alphanumeric and 3-50 characters", ValidationSeverity.ERROR)
+        
+        self.register_rule("erpnext_quantity", self._validate_erpnext_quantity,
+                          "Quantity must be positive number", ValidationSeverity.ERROR)
+        
+        self.register_rule("erpnext_rate", self._validate_erpnext_rate,
+                          "Rate must be non-negative number", ValidationSeverity.ERROR)
+        
+        self.register_rule("erpnext_uom", self._validate_erpnext_uom,
+                          "Unit of measure must be valid", ValidationSeverity.ERROR)
+        
+        self.register_rule("erpnext_territory", self._validate_erpnext_territory,
+                          "Territory must be valid", ValidationSeverity.WARNING)
+        
+        self.register_rule("erpnext_customer_group", self._validate_erpnext_customer_group,
+                          "Customer group must be valid", ValidationSeverity.WARNING)
+        
+        self.register_rule("erpnext_item_group", self._validate_erpnext_item_group,
+                          "Item group must be valid", ValidationSeverity.WARNING)
     
     def register_rule(self, name: str, validator: Callable, message: str, 
                      severity: ValidationSeverity = ValidationSeverity.ERROR):
@@ -268,7 +298,101 @@ class Validator:
             return base_validator(value, param_value)
         return parameterized_validator
     
-    # Built-in validator methods
+    # ERPNext specific validator methods
+    def _validate_erpnext_customer_code(self, value: Any) -> bool:
+        """Validate ERPNext customer code format"""
+        if value is None:
+            return False
+        
+        code = str(value).strip()
+        if len(code) < 3 or len(code) > 50:
+            return False
+        
+        # Alphanumeric with hyphens and underscores allowed
+        return bool(re.match(r'^[a-zA-Z0-9_-]+$', code))
+    
+    def _validate_erpnext_item_code(self, value: Any) -> bool:
+        """Validate ERPNext item code format"""
+        if value is None:
+            return False
+        
+        code = str(value).strip()
+        if len(code) < 3 or len(code) > 50:
+            return False
+        
+        # Alphanumeric with hyphens allowed
+        return bool(re.match(r'^[a-zA-Z0-9-]+$', code))
+    
+    def _validate_erpnext_quantity(self, value: Any) -> bool:
+        """Validate ERPNext quantity"""
+        if value is None:
+            return False
+        
+        try:
+            quantity = float(value)
+            return quantity > 0
+        except (ValueError, TypeError):
+            return False
+    
+    def _validate_erpnext_rate(self, value: Any) -> bool:
+        """Validate ERPNext rate/price"""
+        if value is None:
+            return True  # Rate can be optional in some cases
+        
+        try:
+            rate = float(value)
+            return rate >= 0
+        except (ValueError, TypeError):
+            return False
+    
+    def _validate_erpnext_uom(self, value: Any) -> bool:
+        """Validate ERPNext unit of measure"""
+        if value is None:
+            return True  # Default will be applied
+        
+        valid_uoms = [
+            'Nos', 'Kg', 'Gram', 'Meter', 'Box', 'Packet', 'Set', 'Pair',
+            'Hour', 'Day', 'Month', 'Year', 'Liter', 'Piece', 'Unit'
+        ]
+        
+        return str(value).strip().title() in valid_uoms
+    
+    def _validate_erpnext_territory(self, value: Any) -> bool:
+        """Validate ERPNext territory"""
+        if value is None:
+            return True  # Default will be applied
+        
+        valid_territories = [
+            'Myanmar', 'All Territories', 'Rest Of The World'
+        ]
+        
+        return str(value).strip().title() in valid_territories
+    
+    def _validate_erpnext_customer_group(self, value: Any) -> bool:
+        """Validate ERPNext customer group"""
+        if value is None:
+            return True  # Default will be applied
+        
+        valid_groups = [
+            'Individual', 'Company', 'Government', 'Educational Institution',
+            'Commercial Customer', 'All Customer Groups'
+        ]
+        
+        return str(value).strip().title() in valid_groups
+    
+    def _validate_erpnext_item_group(self, value: Any) -> bool:
+        """Validate ERPNext item group"""
+        if value is None:
+            return True  # Default will be applied
+        
+        valid_groups = [
+            'Products', 'Raw Material', 'Services', 'Sub Assemblies',
+            'Consumable', 'All Item Groups'
+        ]
+        
+        return str(value).strip().title() in valid_groups
+    
+    # Built-in validator methods (unchanged)
     def _validate_required(self, value: Any) -> bool:
         """Validate required field"""
         return value is not None and value != ""
@@ -369,18 +493,15 @@ class Validator:
             return True
         
         try:
-            # Try ISO format
             datetime.fromisoformat(str(value).replace('Z', '+00:00'))
             return True
         except ValueError:
             pass
         
-        # Try other common formats
         date_formats = [
             '%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y/%m/%d',
             '%m-%d-%Y', '%d-%m-%Y', '%Y.%m.%d', '%d.%m.%Y',
-            '%b %d, %Y', '%B %d, %Y'
-        ]
+            '%b %d, %Y', '%B %d, %Y' ]
         
         for fmt in date_formats:
             try:
@@ -443,7 +564,6 @@ class Validator:
             phone_number = phonenumbers.parse(str(value), None)
             return phonenumbers.is_valid_number(phone_number)
         except phonenumbers.NumberParseException:
-            # Fallback to regex for basic validation
             pattern = r'^\+?[1-9]\d{1,14}$|^[0-9\s\-\+\(\)]{7,20}$'
             return bool(re.match(pattern, str(value)))
     
@@ -466,51 +586,229 @@ class Validator:
         return value not in disallowed_list
 
 # Domain-specific validators
-class CustomerValidator:
-    """Customer data validator"""
+class ERPNextValidator:
+    """ERPNext specific data validator"""
     
     def __init__(self):
         self.validator = Validator()
+        self.schemas = self._initialize_erpnext_schemas()
+    
+    def _initialize_erpnext_schemas(self) -> Dict[ERPNextEndpoint, Dict[str, Any]]:
+        """Initialize ERPNext endpoint specific validation schemas"""
+        return {
+            ERPNextEndpoint.CUSTOMERS: {
+                "customer_name": {
+                    "required": True,
+                    "min_length": {"value": 2},
+                    "max_length": {"value": 100}
+                },
+                "customer_group": {
+                    "erpnext_customer_group": True
+                },
+                "territory": {
+                    "erpnext_territory": True
+                },
+                "mobile_no": {
+                    "phone": True,
+                    "max_length": {"value": 20}
+                },
+                "email_id": {
+                    "email": True,
+                    "max_length": {"value": 255}
+                }
+            },
+            
+            ERPNextEndpoint.ITEMS: {
+                "item_code": {
+                    "required": True,
+                    "erpnext_item_code": True
+                },
+                "item_name": {
+                    "required": True,
+                    "min_length": {"value": 2},
+                    "max_length": {"value": 100}
+                },
+                "item_group": {
+                    "erpnext_item_group": True
+                },
+                "stock_uom": {
+                    "erpnext_uom": True
+                }
+            },
+            
+            ERPNextEndpoint.SALES_ORDERS: {
+                "customer": {
+                    "required": True,
+                    "min_length": {"value": 3}
+                },
+                "delivery_date": {
+                    "required": True,
+                    "date": True
+                },
+                "items": {
+                    "required": True
+                }
+            },
+            
+            ERPNextEndpoint.SALES_INVOICES: {
+                "customer": {
+                    "required": True,
+                    "min_length": {"value": 3}
+                },
+                "posting_date": {
+                    "required": True,
+                    "date": True
+                },
+                "due_date": {
+                    "required": True,
+                    "date": True
+                },
+                "items": {
+                    "required": True
+                }
+            },
+            
+            ERPNextEndpoint.PAYMENTS: {
+                "payment_type": {
+                    "required": True,
+                    "in_list": {"value": ["Receive", "Pay"]}
+                },
+                "party": {
+                    "required": True,
+                    "min_length": {"value": 3}
+                },
+                "paid_amount": {
+                    "required": True,
+                    "erpnext_rate": True
+                }
+            }
+        }
+    
+    def validate_for_endpoint(self, data: Dict[str, Any], endpoint: ERPNextEndpoint) -> ValidationResult:
+        """Validate data for specific ERPNext endpoint"""
+        schema = self.schemas.get(endpoint, {})
+        return self.validator.validate_object(data, schema)
+    
+    def validate_sales_order_items(self, items: List[Dict[str, Any]]) -> ValidationResult:
+        """Validate sales order/invoice items"""
+        result = ValidationResult()
+        
+        if not items or len(items) == 0:
+            result.add_error("items", "Sales document must contain at least one item")
+            return result
+        
+        for index, item in enumerate(items):
+            item_result = self.validator.validate_object(item, {
+                "item_code": {
+                    "required": True,
+                    "min_length": {"value": 3}
+                },
+                "qty": {
+                    "required": True,
+                    "erpnext_quantity": True
+                },
+                "rate": {
+                    "required": True,
+                    "erpnext_rate": True
+                }
+            })
+            
+            if not item_result.is_valid:
+                for error in item_result.errors:
+                    result.add_error(f"items[{index}].{error['field']}", error['message'])
+        
+        return result
+    
+    def validate_batch_data(self, data: List[Dict[str, Any]], endpoint: ERPNextEndpoint) -> Dict[str, Any]:
+        """Validate batch data for ERPNext endpoint"""
+        results = {
+            "valid_records": [],
+            "invalid_records": [],
+            "summary": {
+                "total": len(data),
+                "valid": 0,
+                "invalid": 0,
+                "endpoint": endpoint.value
+            }
+        }
+        
+        for index, record in enumerate(data):
+            validation_result = self.validate_for_endpoint(record, endpoint)
+            
+            # Additional validation for sales documents
+            if endpoint in [ERPNextEndpoint.SALES_ORDERS, ERPNextEndpoint.SALES_INVOICES]:
+                items = record.get("items", [])
+                items_result = self.validate_sales_order_items(items)
+                validation_result.merge(items_result)
+            
+            record_result = {
+                "index": index,
+                "data": record,
+                "validation": validation_result.to_dict()
+            }
+            
+            if validation_result.is_valid:
+                results["valid_records"].append(record_result)
+            else:
+                results["invalid_records"].append(record_result)
+        
+        results["summary"]["valid"] = len(results["valid_records"])
+        results["summary"]["invalid"] = len(results["invalid_records"])
+        
+        return results
+
+class CustomerValidator:
+    """Customer data validator (Enhanced for ERPNext)"""
+    
+    def __init__(self):
+        self.validator = Validator()
+        self.erpnext_validator = ERPNextValidator()
         self.schema = {
             "customer_code": {
                 "required": True,
-                "min_length": {"value": 3},
-                "max_length": {"value": 50},
-                "alphanumeric": True
+                "erpnext_customer_code": True
             },
             "customer_name": {
                 "required": True,
                 "min_length": {"value": 2},
                 "max_length": {"value": 100}
             },
-            "email_address": {
+            "customer_group": {
+                "erpnext_customer_group": True
+            },
+            "territory": {
+                "erpnext_territory": True
+            },
+            "email_id": {
                 "email": True,
                 "max_length": {"value": 255}
             },
-            "phone_number": {
+            "mobile_no": {
                 "phone": True,
                 "max_length": {"value": 20}
             },
-            "address_line": {
-                "max_length": {"value": 200}
-            },
-            "city": {
-                "max_length": {"value": 100}
-            },
-            "postal_code": {
+            "phone": {
+                "phone": True,
                 "max_length": {"value": 20}
-            },
-            "country": {
-                "max_length": {"value": 50}
             }
         }
     
     def validate_customer(self, customer_data: Dict[str, Any]) -> ValidationResult:
-        """Validate customer data"""
-        return self.validator.validate_object(customer_data, self.schema)
+        """Validate customer data for ERPNext"""
+        # Basic validation
+        basic_result = self.validator.validate_object(customer_data, self.schema)
+        
+        # ERPNext specific validation
+        erpnext_result = self.erpnext_validator.validate_for_endpoint(
+            customer_data, ERPNextEndpoint.CUSTOMERS
+        )
+        
+        # Merge results
+        basic_result.merge(erpnext_result)
+        return basic_result
     
     def validate_customers_batch(self, customers: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Validate batch of customers"""
+        """Validate batch of customers for ERPNext"""
         results = {
             "valid_customers": [],
             "invalid_customers": [],
@@ -523,6 +821,7 @@ class CustomerValidator:
         
         for customer in customers:
             validation_result = self.validate_customer(customer)
+            
             customer_result = {
                 "data": customer,
                 "validation": validation_result.to_dict()
@@ -538,123 +837,42 @@ class CustomerValidator:
         
         return results
 
-class ProductValidator:
-    """Product data validator"""
+class ItemValidator:
+    """Item data validator for ERPNext"""
     
     def __init__(self):
         self.validator = Validator()
+        self.erpnext_validator = ERPNextValidator()
         self.schema = {
-            "product_sku": {
+            "item_code": {
                 "required": True,
-                "min_length": {"value": 3},
-                "max_length": {"value": 50}
+                "erpnext_item_code": True
             },
-            "product_name": {
+            "item_name": {
                 "required": True,
                 "min_length": {"value": 2},
-                "max_length": {"value": 200}
-            },
-            "description": {
-                "max_length": {"value": 1000}
-            },
-            "unit_price": {
-                "required": True,
-                "numeric": True,
-                "min_value": {"value": 0},
-                "max_value": {"value": 999999.99}
-            },
-            "cost_price": {
-                "numeric": True,
-                "min_value": {"value": 0},
-                "max_value": {"value": 999999.99}
-            },
-            "stock_quantity": {
-                "integer": True,
-                "min_value": {"value": 0},
-                "max_value": {"value": 999999}
-            },
-            "category": {
                 "max_length": {"value": 100}
             },
-            "supplier_code": {
-                "max_length": {"value": 50}
+            "item_group": {
+                "erpnext_item_group": True
+            },
+            "stock_uom": {
+                "erpnext_uom": True
             }
         }
     
-    def validate_product(self, product_data: Dict[str, Any]) -> ValidationResult:
-        """Validate product data"""
-        return self.validator.validate_object(product_data, self.schema)
-    
-    def validate_products_batch(self, products: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Validate batch of products"""
-        results = {
-            "valid_products": [],
-            "invalid_products": [],
-            "summary": {
-                "total": len(products),
-                "valid": 0,
-                "invalid": 0
-            }
-        }
+    def validate_item(self, item_data: Dict[str, Any]) -> ValidationResult:
+        """Validate item data for ERPNext"""
+        basic_result = self.validator.validate_object(item_data, self.schema)
+        erpnext_result = self.erpnext_validator.validate_for_endpoint(
+            item_data, ERPNextEndpoint.ITEMS
+        )
         
-        for product in products:
-            validation_result = self.validate_product(product)
-            product_result = {
-                "data": product,
-                "validation": validation_result.to_dict()
-            }
-            
-            if validation_result.is_valid:
-                results["valid_products"].append(product_result)
-            else:
-                results["invalid_products"].append(product_result)
-        
-        results["summary"]["valid"] = len(results["valid_products"])
-        results["summary"]["invalid"] = len(results["invalid_products"])
-        
-        return results
-
-# Utility functions (backward compatibility)
-def validate_customer_data(data: Dict[str, Any], rules: Dict[str, Any] = None) -> Dict[str, Any]:
-    """Legacy customer data validation (for backward compatibility)"""
-    validator = CustomerValidator()
-    result = validator.validate_customer(data)
-    return result.to_dict()
-
-def validate_product_data(data: Dict[str, Any], rules: Dict[str, Any] = None) -> Dict[str, Any]:
-    """Legacy product data validation (for backward compatibility)"""
-    validator = ProductValidator()
-    result = validator.validate_product(data)
-    return result.to_dict()
-
-def validate_business_rules(data: Dict[str, Any], mapping_rules: Dict[str, Any] = None) -> Dict[str, Any]:
-    """Legacy business rules validation (for backward compatibility)"""
-    validator = Validator()
-    
-    if mapping_rules and "validation_rules" in mapping_rules:
-        result = validator.validate_object(data, mapping_rules["validation_rules"])
-    else:
-        result = ValidationResult()
-        result.add_info("general", "No validation rules provided")
-    
-    return result.to_dict()
-
-def validate_email_format(email: str) -> bool:
-    """Validate email format"""
-    validator = Validator()
-    return validator._validate_email(email)
-
-def validate_phone_format(phone: str) -> bool:
-    """Validate phone number format"""
-    validator = Validator()
-    return validator._validate_phone(phone)
-
-def validate_date_format(date_string: str) -> bool:
-    """Validate date format"""
-    validator = Validator()
-    return validator._validate_date(date_string)
+        basic_result.merge(erpnext_result)
+        return basic_result
 
 # Global validator instances
 validator = Validator()
+erpnext_validator = ERPNextValidator()
 customer_validator = CustomerValidator()
-product_validator = ProductValidator()
+item_validator = ItemValidator()
