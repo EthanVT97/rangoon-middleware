@@ -6,6 +6,9 @@ from datetime import datetime
 import logging
 import chardet
 from enum import Enum
+import re
+
+from .models import ERPNextEndpoint, ERPNextCustomerCreate, ERPNextItemCreate, ERPNextSalesOrderCreate, ERPNextSalesInvoiceCreate
 
 logger = logging.getLogger(__name__)
 
@@ -18,13 +21,161 @@ class DataValidationError(Exception):
     """Custom exception for data validation errors"""
     pass
 
+class ERPNextDataMapper:
+    """ERPNext specific data mapping and transformation"""
+    
+    @staticmethod
+    def map_to_erpnext_customer(row: Dict, mapping_config: Dict) -> Dict:
+        """Map row data to ERPNext customer format"""
+        customer_data = {}
+        
+        for target_field, source_config in mapping_config.get('target_columns', {}).items():
+            source_field = source_config.get('source_column')
+            transformation = source_config.get('transformation')
+            
+            if source_field in row and pd.notna(row[source_field]):
+                value = row[source_field]
+                
+                # Apply transformations
+                value = ERPNextDataMapper.apply_transformation(value, transformation)
+                
+                customer_data[target_field] = value
+        
+        # Set default values for required fields if not provided
+        customer_data.setdefault('customer_group', 'Individual')
+        customer_data.setdefault('territory', 'Myanmar')
+        
+        return customer_data
+    
+    @staticmethod
+    def map_to_erpnext_item(row: Dict, mapping_config: Dict) -> Dict:
+        """Map row data to ERPNext item format"""
+        item_data = {}
+        
+        for target_field, source_config in mapping_config.get('target_columns', {}).items():
+            source_field = source_config.get('source_column')
+            transformation = source_config.get('transformation')
+            
+            if source_field in row and pd.notna(row[source_field]):
+                value = row[source_field]
+                
+                # Apply transformations
+                value = ERPNextDataMapper.apply_transformation(value, transformation)
+                
+                item_data[target_field] = value
+        
+        # Set default values for required fields if not provided
+        item_data.setdefault('item_group', 'Products')
+        item_data.setdefault('stock_uom', 'Nos')
+        
+        return item_data
+    
+    @staticmethod
+    def map_to_erpnext_sales_order(row: Dict, mapping_config: Dict) -> Dict:
+        """Map row data to ERPNext sales order format"""
+        order_data = {
+            "items": []
+        }
+        
+        # Map main order fields
+        for target_field, source_config in mapping_config.get('target_columns', {}).items():
+            if target_field != 'items':  # Handle items separately
+                source_field = source_config.get('source_column')
+                transformation = source_config.get('transformation')
+                
+                if source_field in row and pd.notna(row[source_field]):
+                    value = row[source_field]
+                    value = ERPNextDataMapper.apply_transformation(value, transformation)
+                    order_data[target_field] = value
+        
+        # Map item data
+        item_mapping = mapping_config.get('item_mapping', {})
+        if item_mapping:
+            item_data = {}
+            for target_field, source_config in item_mapping.items():
+                source_field = source_config.get('source_column')
+                transformation = source_config.get('transformation')
+                
+                if source_field in row and pd.notna(row[source_field]):
+                    value = row[source_field]
+                    value = ERPNextDataMapper.apply_transformation(value, transformation)
+                    item_data[target_field] = value
+            
+            if item_data:
+                order_data["items"].append(item_data)
+        
+        # Set default values
+        order_data.setdefault('company', 'Myanmar ShweTech')
+        
+        return order_data
+    
+    @staticmethod
+    def apply_transformation(value: Any, transformation: Optional[str]) -> Any:
+        """Apply data transformation"""
+        if transformation == 'uppercase' and isinstance(value, str):
+            return value.upper()
+        elif transformation == 'lowercase' and isinstance(value, str):
+            return value.lower()
+        elif transformation == 'trim' and isinstance(value, str):
+            return value.strip()
+        elif transformation == 'numeric' and isinstance(value, str):
+            # Extract numbers from string
+            numbers = re.findall(r'\d+\.?\d*', value)
+            return float(numbers[0]) if numbers else 0
+        elif transformation == 'date':
+            # Convert to YYYY-MM-DD format
+            try:
+                if isinstance(value, str):
+                    return pd.to_datetime(value).strftime('%Y-%m-%d')
+                elif isinstance(value, datetime):
+                    return value.strftime('%Y-%m-%d')
+            except:
+                return value
+        return value
+    
+    @staticmethod
+    def get_required_fields(endpoint: ERPNextEndpoint) -> List[str]:
+        """Get required fields for ERPNext endpoint"""
+        required_fields = {
+            ERPNextEndpoint.CUSTOMERS: ["customer_name", "customer_group"],
+            ERPNextEndpoint.ITEMS: ["item_code", "item_name"],
+            ERPNextEndpoint.SALES_ORDERS: ["customer", "items"],
+            ERPNextEndpoint.SALES_INVOICES: ["customer", "items"],
+            ERPNextEndpoint.PAYMENTS: ["payment_type", "party", "paid_amount"]
+        }
+        return required_fields.get(endpoint, [])
+    
+    @staticmethod
+    def validate_erpnext_data(data: Dict, endpoint: ERPNextEndpoint) -> List[str]:
+        """Validate data for ERPNext endpoint requirements"""
+        errors = []
+        required_fields = ERPNextDataMapper.get_required_fields(endpoint)
+        
+        for field in required_fields:
+            if field not in data or data[field] is None or data[field] == '':
+                errors.append(f"Missing required field: {field}")
+            
+            # Special validation for items in sales orders and invoices
+            if field == 'items' and endpoint in [ERPNextEndpoint.SALES_ORDERS, ERPNextEndpoint.SALES_INVOICES]:
+                if not data.get('items') or len(data['items']) == 0:
+                    errors.append("Sales order/invoice must contain at least one item")
+                else:
+                    for item in data['items']:
+                        if not item.get('item_code'):
+                            errors.append("Item must have item_code")
+                        if not item.get('qty') or item['qty'] <= 0:
+                            errors.append("Item must have valid quantity")
+        
+        return errors
+
 class FileProcessor:
-    """Enhanced file processor with validation and mapping support"""
+    """Enhanced file processor with ERPNext integration support"""
     
     def __init__(self):
         self.supported_formats = {'.xlsx', '.xls', '.csv'}
         self.max_file_size = 50 * 1024 * 1024  # 50MB
         self.default_encoding = 'utf-8'
+        self.erpnext_mapper = ERPNextDataMapper()
     
     def process_uploaded_file(self, file_content: str, filename: str, mapping_config: Optional[Dict] = None) -> Tuple[pd.DataFrame, Dict[str, Any]]:
         """
@@ -202,7 +353,7 @@ class FileProcessor:
     
     def validate_with_mapping(self, df: pd.DataFrame, mapping_config: Dict) -> Dict[str, Any]:
         """
-        Validate DataFrame against mapping configuration
+        Validate DataFrame against mapping configuration with ERPNext specific validation
         """
         errors = []
         warnings = []
@@ -229,13 +380,48 @@ class FileProcessor:
             if col in df.columns and df[col].isna().all():
                 warnings.append(f"Required column '{col}' is completely empty")
         
+        # ERPNext specific validation if endpoint is specified
+        erp_endpoint = mapping_config.get('erp_endpoint')
+        if erp_endpoint:
+            erp_errors = self.validate_erpnext_requirements(df, erp_endpoint, mapping_config)
+            errors.extend(erp_errors)
+        
         return {
             "is_valid": len(errors) == 0,
             "errors": errors,
             "warnings": warnings,
             "columns_found": list(df.columns),
-            "columns_required": required_columns
+            "columns_required": required_columns,
+            "erp_endpoint": erp_endpoint
         }
+    
+    def validate_erpnext_requirements(self, df: pd.DataFrame, endpoint: str, mapping_config: Dict) -> List[str]:
+        """Validate data against ERPNext endpoint requirements"""
+        errors = []
+        
+        try:
+            erp_endpoint = ERPNextEndpoint(endpoint)
+            required_fields = self.erpnext_mapper.get_required_fields(erp_endpoint)
+            
+            # Check if mapped fields cover required fields
+            target_mapping = mapping_config.get('target_columns', {})
+            mapped_fields = set(target_mapping.keys())
+            
+            missing_required = set(required_fields) - mapped_fields
+            if missing_required:
+                errors.append(f"ERPNext {endpoint} requires mapping for: {', '.join(missing_required)}")
+            
+            # Validate sample data conversion
+            if len(df) > 0:
+                sample_data = self.convert_to_erpnext_format(df.head(1), mapping_config, erp_endpoint)
+                if sample_data:
+                    sample_errors = self.erpnext_mapper.validate_erpnext_data(sample_data[0], erp_endpoint)
+                    errors.extend(sample_errors)
+            
+        except ValueError:
+            errors.append(f"Invalid ERPNext endpoint: {endpoint}")
+        
+        return errors
     
     def validate_column_data_type(self, series: pd.Series, expected_type: str, column_name: str) -> List[str]:
         """
@@ -252,16 +438,20 @@ class FileProcessor:
         elif expected_type == 'date':
             # Try to parse as date
             try:
-                pd.to_datetime(series, errors='raise')
+                pd.to_datetime(series, errors='coerce')
+                invalid_dates = pd.to_datetime(series, errors='coerce').isna() & (series != '')
+                if invalid_dates.any():
+                    invalid_count = invalid_dates.sum()
+                    errors.append(f"Column '{column_name}' has {invalid_count} invalid date values")
             except:
                 errors.append(f"Column '{column_name}' contains invalid date values")
         
         elif expected_type == 'email':
             # Basic email validation
             email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-            invalid_emails = series.astype(str).str.match(email_pattern, na=False)
-            if not invalid_emails.all():
-                invalid_count = (~invalid_emails).sum()
+            invalid_emails = ~series.astype(str).str.match(email_pattern, na=False)
+            if invalid_emails.any():
+                invalid_count = invalid_emails.sum()
                 errors.append(f"Column '{column_name}' has {invalid_count} invalid email addresses")
         
         return errors
@@ -300,7 +490,6 @@ class FileProcessor:
         Validate file extension
         """
         return any(filename.lower().endswith(ext) for ext in self.supported_formats)
-    
     def validate_file_size(self, file_bytes: bytes, filename: str):
         """
         Validate file size
@@ -370,44 +559,97 @@ class FileProcessor:
             "memory_usage_kb": round(df.memory_usage(deep=True).sum() / 1024, 2)
         }
     
-    def convert_to_erp_format(self, df: pd.DataFrame, mapping_config: Dict) -> List[Dict[str, Any]]:
+    def convert_to_erpnext_format(self, df: pd.DataFrame, mapping_config: Dict, endpoint: ERPNextEndpoint) -> List[Dict[str, Any]]:
         """
-        Convert DataFrame to ERP format using mapping configuration
+        Convert DataFrame to ERPNext specific format using mapping configuration
         """
         try:
             erp_data = []
-            source_columns = mapping_config.get('source_columns', [])
-            target_mapping = mapping_config.get('target_columns', {})
             
             for _, row in df.iterrows():
-                erp_record = {}
+                row_dict = row.to_dict()
                 
-                for target_field, source_config in target_mapping.items():
-                    source_field = source_config.get('source_column')
-                    transformation = source_config.get('transformation')
-                    
-                    if source_field in df.columns:
-                        value = row[source_field]
+                # Map based on endpoint type
+                if endpoint == ERPNextEndpoint.CUSTOMERS:
+                    mapped_data = self.erpnext_mapper.map_to_erpnext_customer(row_dict, mapping_config)
+                elif endpoint == ERPNextEndpoint.ITEMS:
+                    mapped_data = self.erpnext_mapper.map_to_erpnext_item(row_dict, mapping_config)
+                elif endpoint == ERPNextEndpoint.SALES_ORDERS:
+                    mapped_data = self.erpnext_mapper.map_to_erpnext_sales_order(row_dict, mapping_config)
+                elif endpoint == ERPNextEndpoint.SALES_INVOICES:
+                    mapped_data = self.erpnext_mapper.map_to_erpnext_sales_order(row_dict, mapping_config)
+                else:
+                    # Generic mapping for other endpoints
+                    mapped_data = {}
+                    for target_field, source_config in mapping_config.get('target_columns', {}).items():
+                        source_field = source_config.get('source_column')
+                        transformation = source_config.get('transformation')
                         
-                        # Apply transformations if specified
-                        if transformation == 'uppercase' and isinstance(value, str):
-                            value = value.upper()
-                        elif transformation == 'lowercase' and isinstance(value, str):
-                            value = value.lower()
-                        elif transformation == 'trim' and isinstance(value, str):
-                            value = value.strip()
-                        
-                        erp_record[target_field] = value
-                    else:
-                        erp_record[target_field] = None
+                        if source_field in row_dict and pd.notna(row_dict[source_field]):
+                            value = row_dict[source_field]
+                            value = self.erpnext_mapper.apply_transformation(value, transformation)
+                            mapped_data[target_field] = value
                 
-                erp_data.append(erp_record)
+                # Validate the mapped data
+                validation_errors = self.erpnext_mapper.validate_erpnext_data(mapped_data, endpoint)
+                if validation_errors:
+                    logger.warning(f"Validation errors for record: {validation_errors}")
+                    # Continue processing but log errors
+                
+                erp_data.append(mapped_data)
             
+            logger.info(f"Successfully converted {len(erp_data)} records to ERPNext format for {endpoint.value}")
             return erp_data
             
         except Exception as e:
-            logger.error(f"Error converting to ERP format: {str(e)}")
-            raise DataValidationError(f"Data conversion failed: {str(e)}")
+            logger.error(f"Error converting to ERPNext format: {str(e)}")
+            raise DataValidationError(f"ERPNext data conversion failed: {str(e)}")
+    
+    def convert_to_erp_format(self, df: pd.DataFrame, mapping_config: Dict) -> List[Dict[str, Any]]:
+        """
+        Legacy method for backward compatibility
+        """
+        endpoint_str = mapping_config.get('erp_endpoint', 'customers')
+        try:
+            endpoint = ERPNextEndpoint(endpoint_str)
+            return self.convert_to_erpnext_format(df, mapping_config, endpoint)
+        except ValueError:
+            # Fallback to generic conversion
+            return self._convert_to_generic_erp_format(df, mapping_config)
+    
+    def _convert_to_generic_erp_format(self, df: pd.DataFrame, mapping_config: Dict) -> List[Dict[str, Any]]:
+        """
+        Generic ERP format conversion (fallback)
+        """
+        erp_data = []
+        target_mapping = mapping_config.get('target_columns', {})
+        
+        for _, row in df.iterrows():
+            erp_record = {}
+            
+            for target_field, source_config in target_mapping.items():
+                source_field = source_config.get('source_column')
+                transformation = source_config.get('transformation')
+                
+                if source_field in df.columns:
+                    value = row[source_field]
+                    
+                    # Apply transformations if specified
+                    if transformation == 'uppercase' and isinstance(value, str):
+                        value = value.upper()
+                    elif transformation == 'lowercase' and isinstance(value, str):
+                        value = value.lower()
+                    elif transformation == 'trim' and isinstance(value, str):
+                        value = value.strip()
+                    
+                    erp_record[target_field] = value
+                else:
+                    erp_record[target_field] = None
+            
+            erp_data.append(erp_record)
+        
+        return erp_data
 
 # Global file processor instance
 file_processor = FileProcessor()
+  
