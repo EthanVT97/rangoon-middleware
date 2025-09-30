@@ -45,6 +45,28 @@ class ValidationSeverity(str, Enum):
     WARNING = "warning"
     INFO = "info"
 
+# ERPNext Specific Enums
+class ERPNextEndpoint(str, Enum):
+    ITEMS = "Item"
+    CUSTOMERS = "Customer"
+    SALES_ORDERS = "Sales Order"
+    SALES_INVOICES = "Sales Invoice"
+    PAYMENTS = "Payment Entry"
+    BINS = "Bin"  # Stock information
+
+class ERPNextDocStatus(int, Enum):
+    DRAFT = 0
+    SUBMITTED = 1
+    CANCELLED = 2
+
+class PaymentType(str, Enum):
+    RECEIVE = "Receive"
+    PAY = "Pay"
+
+class PartyType(str, Enum):
+    CUSTOMER = "Customer"
+    SUPPLIER = "Supplier"
+
 # User Management Models
 class UserRegister(BaseModel):
     email: EmailStr = Field(..., description="User email address")
@@ -105,7 +127,7 @@ class ColumnMappingCreate(BaseModel):
     source_columns: List[ColumnMappingRule] = Field(..., description="Source column definitions")
     target_columns: Dict[str, Any] = Field(..., description="Target column mapping")
     mapping_rules: Dict[str, Any] = Field(default_factory=dict, description="Additional mapping rules")
-    erp_endpoint: str = Field("customers", description="ERP endpoint for this mapping")
+    erp_endpoint: ERPNextEndpoint = Field(ERPNextEndpoint.CUSTOMERS, description="ERP endpoint for this mapping")
     is_active: bool = Field(True, description="Mapping status")
     
     @validator('mapping_name')
@@ -120,7 +142,7 @@ class ColumnMappingUpdate(BaseModel):
     source_columns: Optional[List[ColumnMappingRule]] = None
     target_columns: Optional[Dict[str, Any]] = None
     mapping_rules: Optional[Dict[str, Any]] = None
-    erp_endpoint: Optional[str] = None
+    erp_endpoint: Optional[ERPNextEndpoint] = None
     is_active: Optional[bool] = None
 
 class ColumnMappingResponse(BaseModel):
@@ -130,7 +152,7 @@ class ColumnMappingResponse(BaseModel):
     source_columns: List[Dict[str, Any]] = Field(..., description="Source column definitions")
     target_columns: Dict[str, Any] = Field(..., description="Target column mapping")
     mapping_rules: Dict[str, Any] = Field(..., description="Additional mapping rules")
-    erp_endpoint: str = Field(..., description="ERP endpoint")
+    erp_endpoint: ERPNextEndpoint = Field(..., description="ERP endpoint")
     created_by: str = Field(..., description="Creator user ID")
     is_active: bool = Field(..., description="Mapping status")
     created_at: datetime = Field(..., description="Creation timestamp")
@@ -214,12 +236,14 @@ class ImportJobDetailResponse(ImportJobResponse):
     file_metadata: Optional[FileMetadata] = Field(None, description="File metadata")
     validation_result: Optional[DataValidationResult] = Field(None, description="Validation results")
 
-# ERP Integration Models
-class ERPConnectionCreate(BaseModel):
+# ERPNext Integration Models
+class ERPNextConnectionCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=50, description="Connection name")
-    base_url: str = Field(..., description="ERP base URL")
+    base_url: str = Field(..., description="ERPNext base URL")
     api_key: str = Field(..., description="API key")
-    endpoints: Dict[str, str] = Field(..., description="ERP endpoints")
+    username: str = Field(..., description="ERPNext username")
+    password: str = Field(..., description="ERPNext password")
+    company: str = Field("Myanmar ShweTech", description="Default company")
     timeout: int = Field(30, ge=5, le=120, description="Request timeout in seconds")
     max_retries: int = Field(3, ge=1, le=10, description="Maximum retry attempts")
     
@@ -229,20 +253,23 @@ class ERPConnectionCreate(BaseModel):
             raise ValueError("Base URL must start with http:// or https://")
         return v.rstrip('/')
 
-class ERPConnectionUpdate(BaseModel):
+class ERPNextConnectionUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=50)
     base_url: Optional[str] = Field(None)
     api_key: Optional[str] = Field(None)
-    endpoints: Optional[Dict[str, str]] = None
+    username: Optional[str] = Field(None)
+    password: Optional[str] = Field(None)
+    company: Optional[str] = Field(None)
     timeout: Optional[int] = Field(None, ge=5, le=120)
     max_retries: Optional[int] = Field(None, ge=1, le=10)
     is_active: Optional[bool] = None
 
-class ERPConnectionResponse(BaseModel):
+class ERPNextConnectionResponse(BaseModel):
     id: str = Field(..., description="Connection ID")
     name: str = Field(..., description="Connection name")
-    base_url: str = Field(..., description="ERP base URL")
-    endpoints: Dict[str, str] = Field(..., description="ERP endpoints")
+    base_url: str = Field(..., description="ERPNext base URL")
+    username: str = Field(..., description="ERPNext username")
+    company: str = Field(..., description="Default company")
     timeout: int = Field(..., description="Request timeout")
     max_retries: int = Field(..., description="Max retries")
     is_active: bool = Field(..., description="Connection status")
@@ -252,12 +279,74 @@ class ERPConnectionResponse(BaseModel):
     class Config:
         from_attributes = True
 
-class ERPRequest(BaseModel):
-    endpoint: str = Field(..., description="ERP endpoint")
+# ERPNext Specific Data Models
+class ERPNextItemCreate(BaseModel):
+    item_code: str = Field(..., description="Item code")
+    item_name: str = Field(..., description="Item name")
+    item_group: str = Field("Products", description="Item group")
+    stock_uom: str = Field("Nos", description="Stock UOM")
+
+class ERPNextCustomerCreate(BaseModel):
+    customer_name: str = Field(..., description="Customer name")
+    customer_group: str = Field("Individual", description="Customer group")
+    territory: str = Field("Myanmar", description="Territory")
+    mobile_no: Optional[str] = Field(None, description="Mobile number")
+    email_id: Optional[str] = Field(None, description="Email address")
+    phone: Optional[str] = Field(None, description="Phone number")
+
+class ERPNextSalesOrderItem(BaseModel):
+    item_code: str = Field(..., description="Item code")
+    qty: float = Field(..., ge=0, description="Quantity")
+    rate: float = Field(..., ge=0, description="Rate")
+    item_name: Optional[str] = Field(None, description="Item name")
+    uom: Optional[str] = Field("Nos", description="UOM")
+
+class ERPNextSalesOrderCreate(BaseModel):
+    customer: str = Field(..., description="Customer code")
+    delivery_date: str = Field(..., description="Delivery date (YYYY-MM-DD)")
+    company: str = Field("Myanmar ShweTech", description="Company")
+    items: List[ERPNextSalesOrderItem] = Field(..., description="Order items")
+    naming_series: Optional[str] = Field("SAL-ORD-.YYYY.-", description="Naming series")
+    docstatus: ERPNextDocStatus = Field(ERPNextDocStatus.SUBMITTED, description="Document status")
+
+class ERPNextSalesInvoiceItem(BaseModel):
+    item_code: str = Field(..., description="Item code")
+    qty: float = Field(..., ge=0, description="Quantity")
+    rate: float = Field(..., ge=0, description="Rate")
+    item_name: Optional[str] = Field(None, description="Item name")
+    warehouse: Optional[str] = Field("Stores - MST", description="Warehouse")
+    uom: Optional[str] = Field("Nos", description="UOM")
+
+class ERPNextSalesInvoiceCreate(BaseModel):
+    customer: str = Field(..., description="Customer code")
+    posting_date: str = Field(..., description="Posting date (YYYY-MM-DD)")
+    due_date: str = Field(..., description="Due date (YYYY-MM-DD)")
+    update_stock: bool = Field(False, description="Update stock")
+    items: List[ERPNextSalesInvoiceItem] = Field(..., description="Invoice items")
+    allocate_advances_automatically: Optional[bool] = Field(False, description="Auto allocate advances")
+    docstatus: ERPNextDocStatus = Field(ERPNextDocStatus.SUBMITTED, description="Document status")
+
+class ERPNextPaymentEntryCreate(BaseModel):
+    payment_type: PaymentType = Field(..., description="Payment type")
+    party_type: PartyType = Field(PartyType.CUSTOMER, description="Party type")
+    party: str = Field(..., description="Party code")
+    paid_amount: float = Field(..., ge=0, description="Paid amount")
+    received_amount: float = Field(..., ge=0, description="Received amount")
+    paid_from: str = Field("Debtors - MST", description="Paid from account")
+    paid_to: str = Field("Cash - MST", description="Paid to account")
+    mode_of_payment: str = Field("Cash", description="Mode of payment")
+    posting_date: str = Field(..., description="Posting date (YYYY-MM-DD)")
+    reference_no: Optional[str] = Field(None, description="Reference number")
+    reference_date: Optional[str] = Field(None, description="Reference date")
+    docstatus: ERPNextDocStatus = Field(ERPNextDocStatus.SUBMITTED, description="Document status")
+    references: Optional[List[Dict[str, Any]]] = Field(None, description="Payment references")
+
+class ERPNextRequest(BaseModel):
+    endpoint: ERPNextEndpoint = Field(..., description="ERPNext endpoint")
     data: List[Dict[str, Any]] = Field(..., description="Data to send")
     batch_size: int = Field(50, ge=1, le=1000, description="Batch size")
 
-class ERPResponse(BaseModel):
+class ERPNextResponse(BaseModel):
     success: bool = Field(..., description="Request success status")
     status_code: Optional[int] = Field(None, description="HTTP status code")
     message: str = Field(..., description="Response message")
@@ -265,6 +354,41 @@ class ERPResponse(BaseModel):
     errors: List[Dict[str, Any]] = Field(default_factory=list, description="Error details")
     processing_time: float = Field(..., description="Processing time in seconds")
     timestamp: datetime = Field(..., description="Response timestamp")
+    circuit_breaker_status: Optional[Dict[str, Any]] = Field(None, description="Circuit breaker status")
+
+class ERPNextBatchResult(BaseModel):
+    batch: int = Field(..., description="Batch number")
+    status: str = Field(..., description="Batch status")
+    records_sent: int = Field(..., description="Records successfully sent")
+    failed_records: List[Dict[str, Any]] = Field(default_factory=list, description="Failed records")
+    attempts: int = Field(..., description="Number of attempts")
+
+class ERPNextIntegrationResponse(BaseModel):
+    success: bool = Field(..., description="Overall success status")
+    total_records_processed: int = Field(..., description="Total records processed")
+    successful_records: int = Field(..., description="Successful records")
+    failed_records: int = Field(..., description="Failed records")
+    validation_errors: List[Dict[str, Any]] = Field(default_factory=list, description="Validation errors")
+    batch_results: List[ERPNextBatchResult] = Field(default_factory=list, description="Batch results")
+    processing_time_seconds: float = Field(..., description="Processing time")
+    circuit_breaker_status: Dict[str, Any] = Field(..., description="Circuit breaker status")
+    sent_at: datetime = Field(..., description="Sent timestamp")
+
+# ERPNext Test Models
+class ERPNextTestConnection(BaseModel):
+    base_url: str = Field(..., description="ERPNext base URL")
+    username: str = Field(..., description="ERPNext username")
+    password: str = Field(..., description="ERPNext password")
+    api_key: Optional[str] = Field(None, description="API key (optional)")
+
+class ERPNextTestResponse(BaseModel):
+    success: bool = Field(..., description="Connection success")
+    status_code: Optional[int] = Field(None, description="HTTP status code")
+    response_time: float = Field(..., description="Response time in seconds")
+    test_endpoint: str = Field(..., description="Test endpoint used")
+    message: str = Field(..., description="Response message")
+    circuit_breaker_status: Dict[str, Any] = Field(..., description="Circuit breaker status")
+    tested_at: datetime = Field(..., description="Test timestamp")
 
 # Monitoring and Metrics Models
 class SystemMetrics(BaseModel):
@@ -307,6 +431,7 @@ class WebSocketMessageType(str, Enum):
     ERROR = "error"
     SYSTEM_NOTIFICATION = "system_notification"
     HEARTBEAT = "heartbeat"
+    ERP_INTEGRATION_PROGRESS = "erp_integration_progress"
 
 class WebSocketMessage(BaseModel):
     type: WebSocketMessageType = Field(..., description="Message type")
@@ -323,6 +448,15 @@ class ProgressUpdate(BaseModel):
     total_records: int = Field(..., description="Total records")
     message: str = Field(..., description="Progress message")
     estimated_time_remaining: Optional[float] = Field(None, description="Estimated time remaining in seconds")
+
+class ERPIntegrationProgress(BaseModel):
+    job_id: str = Field(..., description="Job ID")
+    endpoint: ERPNextEndpoint = Field(..., description="ERPNext endpoint")
+    processed: int = Field(..., description="Processed records")
+    successful: int = Field(..., description="Successful records")
+    failed: int = Field(..., description="Failed records")
+    timestamp: datetime = Field(..., description="Progress timestamp")
+    circuit_breaker_state: str = Field(..., description="Circuit breaker state")
 
 # Response Wrappers
 class PaginatedResponse(BaseModel):
