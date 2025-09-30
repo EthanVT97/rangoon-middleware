@@ -11,9 +11,10 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from decouple import config
 import redis.asyncio as redis
+import httpx
 
 from .database.supabase_client import supabase
-from .models import UserRole, Token, TokenData
+from .models import UserRole, Token, TokenData, ERPNextEndpoint
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ class TokenType(Enum):
     ACCESS = "access"
     REFRESH = "refresh"
     RESET = "reset"
+    ERPNEXT_API = "erpnext_api"
 
 class AuthError(Enum):
     INVALID_CREDENTIALS = "invalid_credentials"
@@ -33,15 +35,19 @@ class AuthError(Enum):
     TOKEN_INVALID = "token_invalid"
     INSUFFICIENT_PERMISSIONS = "insufficient_permissions"
     RATE_LIMITED = "rate_limited"
+    ERP_CONNECTION_FAILED = "erp_connection_failed"
 
 class RateLimiter:
-    """Rate limiting for authentication attempts"""
+    """Enhanced rate limiting for authentication and ERPNext API calls"""
     
     def __init__(self):
         self.redis_client = None
         self.max_attempts = 5
         self.window_minutes = 15
         self.lockout_minutes = 30
+        # ERPNext specific rate limits
+        self.erp_max_requests = 100  # per minute
+        self.erp_window_seconds = 60
     
     async def init_redis(self):
         """Initialize Redis connection"""
@@ -63,7 +69,14 @@ class RateLimiter:
         """Check if request is rate limited"""
         key = f"rate_limit:{action}:{identifier}"
         current_time = int(time.time())
-        window_seconds = self.window_minutes * 60
+        
+        # Set different windows for different actions
+        if action.startswith("erpnext_"):
+            window_seconds = self.erp_window_seconds
+            max_attempts = self.erp_max_requests
+        else:
+            window_seconds = self.window_minutes * 60
+            max_attempts = self.max_attempts
         
         try:
             if self.redis_client:
@@ -90,7 +103,7 @@ class RateLimiter:
                 self.memory_store[key].append(current_time)
                 attempts = len(self.memory_store[key])
             
-            return attempts >= self.max_attempts
+            return attempts >= max_attempts
             
         except Exception as e:
             logger.error(f"Rate limit check failed: {e}")
@@ -100,7 +113,14 @@ class RateLimiter:
         """Get remaining attempts before lockout"""
         key = f"rate_limit:{action}:{identifier}"
         current_time = int(time.time())
-        window_seconds = self.window_minutes * 60
+        
+        # Set different windows for different actions
+        if action.startswith("erpnext_"):
+            window_seconds = self.erp_window_seconds
+            max_attempts = self.erp_max_requests
+        else:
+            window_seconds = self.window_minutes * 60
+            max_attempts = self.max_attempts
         
         try:
             if self.redis_client:
@@ -116,11 +136,11 @@ class RateLimiter:
                     ]
                     attempts = len(self.memory_store[key])
             
-            return max(0, self.max_attempts - attempts)
+            return max(0, max_attempts - attempts)
             
         except Exception as e:
             logger.error(f"Failed to get remaining attempts: {e}")
-            return self.max_attempts
+            return max_attempts
     
     async def lock_account(self, identifier: str, minutes: int = 30):
         """Lock account for specified minutes"""
@@ -149,8 +169,13 @@ class RateLimiter:
             logger.error(f"Failed to check account lock: {e}")
             return False
 
+    async def check_erpnext_rate_limit(self, user_id: str, endpoint: ERPNextEndpoint) -> bool:
+        """Check ERPNext API rate limit for specific user and endpoint"""
+        key = f"erpnext_rate_limit:{user_id}:{endpoint.value}"
+        return await self.is_rate_limited(key, f"erpnext_{endpoint.value}")
+
 class TokenBlacklist:
-    """Token blacklist management"""
+    """Enhanced token blacklist management with ERPNext support"""
     
     def __init__(self):
         self.redis_client = None
@@ -178,7 +203,6 @@ class TokenBlacklist:
                 await self.redis_client.setex(f"blacklist:{token}", expires_in, "1")
             else:
                 self.memory_blacklist.add(token)
-                # Note: In-memory blacklist doesn't expire automatically
         except Exception as e:
             logger.error(f"Failed to blacklist token: {e}")
     
@@ -193,8 +217,94 @@ class TokenBlacklist:
             logger.error(f"Failed to check token blacklist: {e}")
             return False
 
+class ERPNextAuthHandler:
+    """ERPNext specific authentication handler"""
+    
+    def __init__(self):
+        self.timeout = 30.0
+    
+    async def test_erpnext_connection(self, base_url: str, api_key: str, username: str = None, password: str = None) -> Dict[str, Any]:
+        """Test ERPNext connection with credentials"""
+        try:
+            headers = {
+                "Authorization": f"token {api_key}:{api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+            
+            # If username/password provided, try login first
+            if username and password:
+                login_url = f"{base_url.rstrip('/')}/api/method/login"
+                login_payload = {
+                    "usr": username,
+                    "pwd": password
+                }
+                
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    login_response = await client.post(login_url, json=login_payload, headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json"
+                    })
+                    
+                    if login_response.status_code != 200:
+                        return {
+                            "success": False,
+                            "error": f"ERPNext login failed: {login_response.text}",
+                            "status_code": login_response.status_code
+                        }
+            
+            # Test API endpoint
+            test_url = f"{base_url.rstrip('/')}/api/resource/Item?fields=[\"name\"]&limit_page_length=1"
+            
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.get(test_url, headers=headers)
+                
+                return {
+                    "success": response.status_code == 200,
+                    "status_code": response.status_code,
+                    "error": response.text if response.status_code != 200 else None,
+                    "tested_at": datetime.now(timezone.utc).isoformat()
+                }
+                
+        except httpx.TimeoutException:
+            return {
+                "success": False,
+                "error": "ERPNext connection timeout",
+                "status_code": 408
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"ERPNext connection error: {str(e)}",
+                "status_code": 500
+            }
+    
+    def create_erpnext_api_token(self, connection_data: Dict[str, Any]) -> str:
+        """Create ERPNext API token for storage"""
+        token_data = {
+            "base_url": connection_data["base_url"],
+            "api_key": connection_data["api_key"],
+            "username": connection_data.get("username"),
+            "company": connection_data.get("company", "Myanmar ShweTech"),
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Encrypt the token data
+        from jose import jwt
+        secret_key = config("SECRET_KEY")
+        return jwt.encode(token_data, secret_key, algorithm="HS256")
+    
+    def decode_erpnext_api_token(self, token: str) -> Optional[Dict[str, Any]]:
+        """Decode ERPNext API token"""
+        try:
+            secret_key = config("SECRET_KEY")
+            payload = jwt.decode(token, secret_key, algorithms=["HS256"])
+            return payload
+        except JWTError:
+            return None
+
 class AuthHandler:
-    """Enhanced authentication handler with security features"""
+    """Enhanced authentication handler with ERPNext integration support"""
     
     def __init__(self):
         self.secret_key = config("SECRET_KEY")
@@ -209,6 +319,9 @@ class AuthHandler:
         # Rate limiting and blacklist
         self.rate_limiter = RateLimiter()
         self.token_blacklist = TokenBlacklist()
+        
+        # ERPNext auth handler
+        self.erpnext_auth = ERPNextAuthHandler()
         
         # Initialize components
         asyncio.create_task(self._initialize_components())
@@ -411,6 +524,27 @@ class AuthHandler:
         logger.debug(f"Authenticated user: {user_id}")
         return user
     
+    async def check_erpnext_rate_limit(self, user_id: str, endpoint: ERPNextEndpoint) -> bool:
+        """Check if user has exceeded ERPNext API rate limit"""
+        return await self.rate_limiter.check_erpnext_rate_limit(user_id, endpoint)
+    
+    async def test_erpnext_connection(self, connection_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Test ERPNext connection"""
+        return await self.erpnext_auth.test_erpnext_connection(
+            base_url=connection_data["base_url"],
+            api_key=connection_data["api_key"],
+            username=connection_data.get("username"),
+            password=connection_data.get("password")
+        )
+    
+    def create_erpnext_api_token(self, connection_data: Dict[str, Any]) -> str:
+        """Create encrypted ERPNext API token"""
+        return self.erpnext_auth.create_erpnext_api_token(connection_data)
+    
+    def decode_erpnext_api_token(self, token: str) -> Optional[Dict[str, Any]]:
+        """Decode ERPNext API token"""
+        return self.erpnext_auth.decode_erpnext_api_token(token)
+    
     async def refresh_access_token(self, refresh_token: str) -> Optional[Token]:
         """Refresh access token using refresh token"""
         payload = self.verify_token(refresh_token, TokenType.REFRESH)
@@ -514,66 +648,8 @@ class AuthHandler:
                 email=payload.get("email"),
                 role=UserRole(payload.get("role")) if payload.get("role") else None
             )
-        except Exception:
+        except JWTError:
             return None
 
-# Global auth handler
+# Global auth handler instance
 auth_handler = AuthHandler()
-
-# Dependency for protected routes
-async def get_current_active_user(current_user: Dict[str, Any] = Depends(auth_handler.get_current_user)):
-    """Dependency for active users"""
-    return current_user
-
-async def get_current_admin_user(current_user: Dict[str, Any] = Depends(auth_handler.get_current_user)):
-    """Dependency for admin-only routes"""
-    if current_user.get("role") != UserRole.ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
-        )
-    return current_user
-
-async def get_current_manager_user(current_user: Dict[str, Any] = Depends(auth_handler.get_current_user)):
-    """Dependency for manager and admin routes"""
-    if current_user.get("role") not in [UserRole.ADMIN, UserRole.MANAGER]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Manager or admin access required"
-        )
-    return current_user
-
-async def optional_auth(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[Dict[str, Any]]:
-    """Optional authentication dependency"""
-    if not credentials:
-        return None
-    
-    try:
-        return await auth_handler.get_current_user(credentials)
-    except HTTPException:
-        return None
-
-# Security middleware
-async def security_middleware(request: Request, call_next):
-    """Security middleware for additional protection"""
-    start_time = time.time()
-    
-    try:
-        response = await call_next(request)
-        
-        # Add security headers
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        
-        # Log slow requests
-        process_time = time.time() - start_time
-        if process_time > 5.0:  # Log requests slower than 5 seconds
-            logger.warning(f"Slow request: {request.method} {request.url.path} - {process_time:.3f}s")
-        
-        return response
-        
-    except Exception as e:
-        logger.error(f"Request processing error: {e}")
-        raise
