@@ -11,7 +11,7 @@
         <header class="dashboard-header">
             <div class="header-content">
                 <h1>Rangoon Middleware</h1>
-                <p>Advanced Excel Import with ERP Integration</p>
+                <p>Advanced Excel Import with ERPNext Integration</p>
             </div>
             <div class="user-info">
                 <span id="userWelcome">Welcome, User</span>
@@ -23,9 +23,26 @@
             <a href="/" class="nav-link active">Dashboard</a>
             <a href="/mapping/create" class="nav-link">Create Mapping</a>
             <a href="/upload/status" class="nav-link">Import Status</a>
+            <a href="/erpnext/setup" class="nav-link">ERPNext Setup</a>
         </nav>
 
         <div class="dashboard-content">
+            <!-- System Status Overview -->
+            <div class="status-overview">
+                <div class="status-item" id="systemStatus">
+                    <div class="status-indicator"></div>
+                    <span>System Status: <strong>Loading...</strong></span>
+                </div>
+                <div class="status-item" id="erpnextStatus">
+                    <div class="status-indicator"></div>
+                    <span>ERPNext: <strong>Checking...</strong></span>
+                </div>
+                <div class="status-item" id="databaseStatus">
+                    <div class="status-indicator"></div>
+                    <span>Database: <strong>Checking...</strong></span>
+                </div>
+            </div>
+
             <!-- Quick Stats -->
             <div class="stats-grid">
                 <div class="stat-card">
@@ -39,14 +56,33 @@
                     <div class="stat-trend" id="successTrend">Overall</div>
                 </div>
                 <div class="stat-card">
-                    <h3>Today's Jobs</h3>
-                    <div class="stat-value" id="todayJobs">0</div>
-                    <div class="stat-trend" id="todayTrend">Today</div>
+                    <h3>ERPNext Calls</h3>
+                    <div class="stat-value" id="erpnextCalls">0</div>
+                    <div class="stat-trend" id="erpnextTrend">Today</div>
                 </div>
                 <div class="stat-card">
                     <h3>Active Monitoring</h3>
                     <div class="stat-value" id="activeMonitoring">0</div>
                     <div class="stat-trend">Live</div>
+                </div>
+            </div>
+
+            <!-- ERPNext Integration Stats -->
+            <div class="erpnext-stats">
+                <h3>ERPNext Integration</h3>
+                <div class="stats-row">
+                    <div class="stat-item">
+                        <span class="stat-label">Circuit Breaker:</span>
+                        <span class="stat-value" id="circuitBreakerStatus">CLOSED</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">API Success Rate:</span>
+                        <span class="stat-value" id="apiSuccessRate">0%</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Avg Response Time:</span>
+                        <span class="stat-value" id="avgResponseTime">0ms</span>
+                    </div>
                 </div>
             </div>
 
@@ -60,8 +96,11 @@
                     <button onclick="showImportModal()" class="btn btn-secondary btn-large">
                         📤 Import Excel File
                     </button>
-                    <button onclick="testERPConnection()" class="btn btn-info btn-large">
-                        🔗 Test ERP Connection
+                    <button onclick="showERPNextSetupModal()" class="btn btn-info btn-large">
+                        ⚙️ ERPNext Setup
+                    </button>
+                    <button onclick="testERPConnection()" class="btn btn-warning btn-large">
+                        🔗 Test Connection
                     </button>
                 </div>
             </div>
@@ -74,6 +113,64 @@
                 </div>
                 <div id="recentJobs" class="jobs-list">
                     <div class="loading">Loading recent jobs...</div>
+                </div>
+            </div>
+
+            <!-- ERPNext Endpoints -->
+            <div class="endpoints-section">
+                <div class="section-header">
+                    <h2>ERPNext Endpoints</h2>
+                    <span class="endpoint-status" id="endpointsStatus">Available: 6 endpoints</span>
+                </div>
+                <div class="endpoints-grid" id="erpnextEndpoints">
+                    <div class="endpoint-card">
+                        <div class="endpoint-icon">👥</div>
+                        <div class="endpoint-info">
+                            <h4>Customers</h4>
+                            <p>Manage customer data</p>
+                        </div>
+                        <div class="endpoint-status success">Active</div>
+                    </div>
+                    <div class="endpoint-card">
+                        <div class="endpoint-icon">📦</div>
+                        <div class="endpoint-info">
+                            <h4>Items</h4>
+                            <p>Product and item management</p>
+                        </div>
+                        <div class="endpoint-status success">Active</div>
+                    </div>
+                    <div class="endpoint-card">
+                        <div class="endpoint-icon">🛒</div>
+                        <div class="endpoint-info">
+                            <h4>Sales Orders</h4>
+                            <p>Order processing</p>
+                        </div>
+                        <div class="endpoint-status success">Active</div>
+                    </div>
+                    <div class="endpoint-card">
+                        <div class="endpoint-icon">🧾</div>
+                        <div class="endpoint-info">
+                            <h4>Sales Invoices</h4>
+                            <p>Invoice generation</p>
+                        </div>
+                        <div class="endpoint-status success">Active</div>
+                    </div>
+                    <div class="endpoint-card">
+                        <div class="endpoint-icon">💰</div>
+                        <div class="endpoint-info">
+                            <h4>Payments</h4>
+                            <p>Payment processing</p>
+                        </div>
+                        <div class="endpoint-status success">Active</div>
+                    </div>
+                    <div class="endpoint-card">
+                        <div class="endpoint-icon">📊</div>
+                        <div class="endpoint-info">
+                            <h4>Stock Info</h4>
+                            <p>Inventory management</p>
+                        </div>
+                        <div class="endpoint-status success">Active</div>
+                    </div>
                 </div>
             </div>
 
@@ -107,6 +204,12 @@
                     <input type="file" id="excelFile" accept=".xlsx,.xls,.csv" required>
                     <div class="file-info">Supported formats: .xlsx, .xls, .csv (Max 50MB)</div>
                 </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="enableERPIntegration" checked>
+                        Enable ERPNext Integration
+                    </label>
+                </div>
                 <div class="form-actions">
                     <button type="button" onclick="closeImportModal()" class="btn btn-outline">Cancel</button>
                     <button type="submit" class="btn btn-primary">Start Import</button>
@@ -115,11 +218,60 @@
         </div>
     </div>
 
+    <!-- ERPNext Setup Modal -->
+    <div id="erpnextSetupModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeERPNextSetupModal()">&times;</span>
+            <h3>ERPNext Connection Setup</h3>
+            <form id="erpnextSetupForm">
+                <div class="form-group">
+                    <label for="erpBaseUrl">ERPNext Base URL:</label>
+                    <input type="url" id="erpBaseUrl" 
+                           placeholder="https://your-instance.erpnext.com" 
+                           value="https://rangoontesting.s.erpnext.com" required>
+                </div>
+                <div class="form-group">
+                    <label for="erpApiKey">API Key:</label>
+                    <input type="password" id="erpApiKey" placeholder="Your ERPNext API Key" required>
+                </div>
+                <div class="form-group">
+                    <label for="erpUsername">Username:</label>
+                    <input type="text" id="erpUsername" placeholder="ERPNext username" value="rangoon">
+                </div>
+                <div class="form-group">
+                    <label for="erpPassword">Password:</label>
+                    <input type="password" id="erpPassword" placeholder="ERPNext password" value="rangoon@123">
+                </div>
+                <div class="form-group">
+                    <label for="erpCompany">Company:</label>
+                    <input type="text" id="erpCompany" placeholder="Default company" value="Myanmar ShweTech">
+                </div>
+                <div class="form-actions">
+                    <button type="button" onclick="testERPConnectionFromForm()" class="btn btn-info">Test Connection</button>
+                    <button type="button" onclick="closeERPNextSetupModal()" class="btn btn-outline">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Configuration</button>
+                </div>
+            </form>
+            <div id="connectionTestResult" class="test-result" style="display: none;">
+                <!-- Connection test results will be displayed here -->
+            </div>
+        </div>
+    </div>
+
     <!-- WebSocket Status -->
     <div id="websocketStatus" class="websocket-status disconnected">
         <span>🔴 Disconnected</span>
     </div>
 
+    <!-- ERPNext Integration Status -->
+    <div id="erpnextIntegrationStatus" class="integration-status">
+        <div class="status-content">
+            <span class="status-icon">⚡</span>
+            <span class="status-text">ERPNext: <span id="erpnextStatusText">Checking...</span></span>
+            <span class="status-details" id="erpnextStatusDetails"></span>
+        </div>
+    </div>
+
     <script src="/static/js/dashboard.js"></script>
 </body>
-</html>
+                            </html>
