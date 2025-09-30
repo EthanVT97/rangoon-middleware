@@ -11,7 +11,7 @@
         <header class="dashboard-header">
             <div class="header-content">
                 <h1>Import Status & Monitoring</h1>
-                <p>Real-time tracking of your file imports</p>
+                <p>Real-time tracking of your file imports and ERPNext integration</p>
             </div>
             <div class="user-info">
                 <button onclick="location.href='/'" class="btn btn-outline">← Back to Dashboard</button>
@@ -19,6 +19,49 @@
         </header>
 
         <div class="status-content">
+            <!-- System Status Overview -->
+            <div class="system-status-section">
+                <h2>System Status</h2>
+                <div class="status-grid">
+                    <div class="status-card">
+                        <div class="status-header">
+                            <h3>ERPNext Integration</h3>
+                            <div class="status-indicator" id="erpnextStatusIndicator">●</div>
+                        </div>
+                        <div class="status-details">
+                            <div class="status-item">
+                                <span>Connection:</span>
+                                <span id="erpnextConnectionStatus">Checking...</span>
+                            </div>
+                            <div class="status-item">
+                                <span>Circuit Breaker:</span>
+                                <span id="circuitBreakerStatus">CLOSED</span>
+                            </div>
+                            <div class="status-item">
+                                <span>API Success Rate:</span>
+                                <span id="apiSuccessRate">0%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="status-card">
+                        <div class="status-header">
+                            <h3>Database</h3>
+                            <div class="status-indicator" id="databaseStatusIndicator">●</div>
+                        </div>
+                        <div class="status-details">
+                            <div class="status-item">
+                                <span>Connection:</span>
+                                <span id="databaseConnectionStatus">Checking...</span>
+                            </div>
+                            <div class="status-item">
+                                <span>Active Jobs:</span>
+                                <span id="databaseActiveJobs">0</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Live Metrics -->
             <div class="metrics-section">
                 <h2>Live Metrics</h2>
@@ -36,15 +79,61 @@
                         <div class="metric-label">Active Now</div>
                     </div>
                     <div class="metric-card">
+                        <div class="metric-value" id="erpnextCalls">0</div>
+                        <div class="metric-label">ERPNext Calls</div>
+                    </div>
+                    <div class="metric-card">
                         <div class="metric-value" id="avgProcessingTime">0s</div>
                         <div class="metric-label">Avg. Processing</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value" id="failedERPCalls">0</div>
+                        <div class="metric-label">Failed API Calls</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ERPNext Integration Metrics -->
+            <div class="erpnext-metrics-section">
+                <h2>ERPNext Integration Metrics</h2>
+                <div class="erpnext-metrics-grid">
+                    <div class="erpnext-metric">
+                        <div class="metric-icon">📊</div>
+                        <div class="metric-info">
+                            <div class="metric-value" id="totalApiCalls">0</div>
+                            <div class="metric-label">Total API Calls</div>
+                        </div>
+                    </div>
+                    <div class="erpnext-metric">
+                        <div class="metric-icon">✅</div>
+                        <div class="metric-info">
+                            <div class="metric-value" id="successfulApiCalls">0</div>
+                            <div class="metric-label">Successful Calls</div>
+                        </div>
+                    </div>
+                    <div class="erpnext-metric">
+                        <div class="metric-icon">⏱️</div>
+                        <div class="metric-info">
+                            <div class="metric-value" id="avgResponseTime">0ms</div>
+                            <div class="metric-label">Avg Response Time</div>
+                        </div>
+                    </div>
+                    <div class="erpnext-metric">
+                        <div class="metric-icon">🔁</div>
+                        <div class="metric-info">
+                            <div class="metric-value" id="circuitBreakerChanges">0</div>
+                            <div class="metric-label">Circuit Changes</div>
+                        </div>
                     </div>
                 </div>
             </div>
 
             <!-- Active Jobs -->
             <div class="active-jobs-section">
-                <h2>Active Import Jobs</h2>
+                <div class="section-header">
+                    <h2>Active Import Jobs</h2>
+                    <button onclick="refreshJobs()" class="btn btn-secondary">Refresh</button>
+                </div>
                 <div id="activeJobsList" class="jobs-list">
                     <div class="empty-state">No active jobs at the moment</div>
                 </div>
@@ -60,6 +149,15 @@
                             <option value="processing">Processing</option>
                             <option value="completed">Completed</option>
                             <option value="failed">Failed</option>
+                            <option value="sending_to_erp">Sending to ERPNext</option>
+                        </select>
+                        <select id="erpEndpointFilter">
+                            <option value="all">All Endpoints</option>
+                            <option value="Customer">Customers</option>
+                            <option value="Item">Items</option>
+                            <option value="Sales Order">Sales Orders</option>
+                            <option value="Sales Invoice">Sales Invoices</option>
+                            <option value="Payment Entry">Payments</option>
                         </select>
                         <input type="text" id="searchJobs" placeholder="Search jobs...">
                     </div>
@@ -71,17 +169,18 @@
                             <tr>
                                 <th>Job ID</th>
                                 <th>Filename</th>
-                                <th>Mapping</th>
+                                <th>ERPNext Endpoint</th>
                                 <th>Status</th>
                                 <th>Progress</th>
                                 <th>Records</th>
+                                <th>ERPNext Status</th>
                                 <th>Started</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody id="jobsTableBody">
                             <tr>
-                                <td colspan="8" class="loading">Loading jobs...</td>
+                                <td colspan="9" class="loading">Loading jobs...</td>
                             </tr>
                         </tbody>
                     </table>
@@ -90,9 +189,39 @@
 
             <!-- Error Summary -->
             <div class="errors-section">
-                <h2>Recent Errors</h2>
+                <div class="section-header">
+                    <h2>Recent Errors</h2>
+                    <div class="error-filters">
+                        <select id="errorTypeFilter">
+                            <option value="all">All Error Types</option>
+                            <option value="validation">Validation Errors</option>
+                            <option value="erpnext_api">ERPNext API Errors</option>
+                            <option value="file_processing">File Processing</option>
+                            <option value="system">System Errors</option>
+                        </select>
+                    </div>
+                </div>
                 <div id="recentErrors" class="errors-list">
                     <div class="empty-state">No recent errors</div>
+                </div>
+            </div>
+
+            <!-- ERPNext API Performance -->
+            <div class="performance-section">
+                <h2>ERPNext API Performance</h2>
+                <div class="performance-grid">
+                    <div class="performance-card">
+                        <h4>Endpoint Performance</h4>
+                        <div id="endpointPerformance" class="performance-list">
+                            <!-- Endpoint performance will be loaded here -->
+                        </div>
+                    </div>
+                    <div class="performance-card">
+                        <h4>Recent API Calls</h4>
+                        <div id="recentApiCalls" class="api-calls-list">
+                            <!-- Recent API calls will be loaded here -->
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -109,9 +238,29 @@
         </div>
     </div>
 
+    <!-- ERPNext Integration Details Modal -->
+    <div id="erpnextDetailsModal" class="modal">
+        <div class="modal-content large">
+            <span class="close" onclick="closeERPNextDetailsModal()">&times;</span>
+            <h3>ERPNext Integration Details</h3>
+            <div id="erpnextDetailsContent">
+                <!-- ERPNext integration details will be loaded here -->
+            </div>
+        </div>
+    </div>
+
     <!-- WebSocket Status -->
     <div id="websocketStatus" class="websocket-status disconnected">
         <span>🔴 Disconnected</span>
+    </div>
+
+    <!-- ERPNext Integration Status -->
+    <div id="erpnextIntegrationStatus" class="integration-status">
+        <div class="status-content">
+            <span class="status-icon">⚡</span>
+            <span class="status-text">ERPNext: <span id="erpnextStatusText">Checking...</span></span>
+            <span class="status-details" id="erpnextStatusDetails"></span>
+        </div>
     </div>
 
     <script src="/static/js/upload-status.js"></script>
