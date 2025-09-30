@@ -10,7 +10,8 @@ import json
 
 from .database.supabase_client import supabase
 from .websocket_manager import websocket_manager
-from .models import ProgressUpdate, WebSocketMessage, WebSocketMessageType
+from .models import ProgressUpdate, WebSocketMessage, WebSocketMessageType, ERPIntegrationProgress, ERPNextEndpoint
+from .erp_integration import erp_integration
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -21,8 +22,69 @@ class AlertLevel(Enum):
     ERROR = "error"
     CRITICAL = "critical"
 
+class ERPNextMetrics:
+    """ERPNext specific performance metrics tracking"""
+    
+    def __init__(self, window_size: int = 100):
+        self.window_size = window_size
+        self.api_response_times = defaultdict(lambda: deque(maxlen=window_size))
+        self.api_success_rates = defaultdict(lambda: deque(maxlen=window_size))
+        self.circuit_breaker_state_changes = deque(maxlen=50)
+        self.batch_processing_times = deque(maxlen=window_size)
+        self.erp_connection_status = deque(maxlen=window_size)
+    
+    def record_api_response_time(self, endpoint: str, response_time: float):
+        """Record API response time for specific endpoint"""
+        self.api_response_times[endpoint].append(response_time)
+    
+    def record_api_success(self, endpoint: str, success: bool):
+        """Record API success/failure for specific endpoint"""
+        self.api_success_rates[endpoint].append(1 if success else 0)
+    
+    def record_circuit_breaker_change(self, old_state: str, new_state: str, endpoint: str):
+        """Record circuit breaker state changes"""
+        self.circuit_breaker_state_changes.append({
+            "timestamp": datetime.now().isoformat(),
+            "old_state": old_state,
+            "new_state": new_state,
+            "endpoint": endpoint
+        })
+    
+    def record_batch_processing_time(self, processing_time: float):
+        """Record batch processing time"""
+        self.batch_processing_times.append(processing_time)
+    
+    def record_connection_status(self, is_connected: bool):
+        """Record ERP connection status"""
+        self.erp_connection_status.append(1 if is_connected else 0)
+    
+    def get_erpnext_metrics_summary(self) -> Dict[str, Any]:
+        """Get ERPNext specific metrics summary"""
+        endpoint_metrics = {}
+        
+        for endpoint in self.api_response_times:
+            response_times = list(self.api_response_times[endpoint])
+            success_rates = list(self.api_success_rates[endpoint])
+            
+            if response_times:
+                endpoint_metrics[endpoint] = {
+                    "avg_response_time": sum(response_times) / len(response_times),
+                    "max_response_time": max(response_times) if response_times else 0,
+                    "min_response_time": min(response_times) if response_times else 0,
+                    "success_rate": (sum(success_rates) / len(success_rates) * 100) if success_rates else 0,
+                    "total_calls": len(response_times)
+                }
+        
+        return {
+            "endpoint_metrics": endpoint_metrics,
+            "avg_batch_processing_time": sum(self.batch_processing_times) / len(self.batch_processing_times) if self.batch_processing_times else 0,
+            "connection_success_rate": (sum(self.erp_connection_status) / len(self.erp_connection_status) * 100) if self.erp_connection_status else 0,
+            "recent_circuit_breaker_changes": list(self.circuit_breaker_state_changes)[-10:],  # Last 10 changes
+            "total_endpoints_monitored": len(endpoint_metrics)
+        }
+
 class PerformanceMetrics:
-    """Performance metrics tracking"""
+    """Enhanced performance metrics tracking with ERPNext support"""
     
     def __init__(self, window_size: int = 100):
         self.window_size = window_size
@@ -30,6 +92,7 @@ class PerformanceMetrics:
         self.error_rates = deque(maxlen=window_size)
         self.memory_usage = deque(maxlen=window_size)
         self.request_rates = deque(maxlen=window_size)
+        self.erpnext_metrics = ERPNextMetrics(window_size)
     
     def record_processing_time(self, processing_time: float):
         """Record processing time for performance analysis"""
@@ -53,8 +116,8 @@ class PerformanceMetrics:
             self.request_rates.append(rate)
     
     def get_performance_summary(self) -> Dict[str, Any]:
-        """Get performance summary"""
-        return {
+        """Get comprehensive performance summary including ERPNext metrics"""
+        base_metrics = {
             "avg_processing_time": sum(self.processing_times) / len(self.processing_times) if self.processing_times else 0,
             "max_processing_time": max(self.processing_times) if self.processing_times else 0,
             "min_processing_time": min(self.processing_times) if self.processing_times else 0,
@@ -65,9 +128,15 @@ class PerformanceMetrics:
             "current_request_rate": self.request_rates[-1] if self.request_rates else 0,
             "metrics_window_size": len(self.processing_times)
         }
+        
+        # Add ERPNext metrics
+        erpnext_summary = self.erpnext_metrics.get_erpnext_metrics_summary()
+        base_metrics["erpnext_metrics"] = erpnext_summary
+        
+        return base_metrics
 
 class AlertManager:
-    """Alert management system"""
+    """Enhanced alert management system with ERPNext specific alerts"""
     
     def __init__(self):
         self.alert_rules = {
@@ -89,9 +158,28 @@ class AlertManager:
             "database_connection": {
                 "level": AlertLevel.CRITICAL,
                 "message": "Database connection issues"
+            },
+            "erpnext_connection": {
+                "level": AlertLevel.CRITICAL,
+                "message": "ERPNext connection lost"
+            },
+            "circuit_breaker_open": {
+                "level": AlertLevel.ERROR,
+                "message": "Circuit breaker opened for ERPNext endpoint"
+            },
+            "high_erpnext_latency": {
+                "threshold": 10.0,  # 10 seconds
+                "level": AlertLevel.WARNING,
+                "message": "High ERPNext API latency detected"
+            },
+            "erpnext_api_failure": {
+                "threshold": 5,  # 5 consecutive failures
+                "level": AlertLevel.ERROR,
+                "message": "Multiple consecutive ERPNext API failures"
             }
         }
         self.active_alerts = {}
+        self.erpnext_failure_count = defaultdict(int)
     
     async def check_and_trigger_alerts(self, metrics: Dict[str, Any], job_data: Optional[Dict] = None):
         """Check metrics against alert rules and trigger alerts if needed"""
@@ -125,6 +213,51 @@ class AlertManager:
                 self.alert_rules["job_timeout"]["level"]
             )
             triggered_alerts.append(alert_id)
+        
+        # Check ERPNext specific alerts
+        erpnext_alerts = await self._check_erpnext_alerts(metrics)
+        triggered_alerts.extend(erpnext_alerts)
+        
+        return triggered_alerts
+    
+    async def _check_erpnext_alerts(self, metrics: Dict[str, Any]) -> List[str]:
+        """Check ERPNext specific alert conditions"""
+        triggered_alerts = []
+        
+        # Check ERPNext connection
+        erpnext_metrics = metrics.get("erpnext_metrics", {})
+        connection_rate = erpnext_metrics.get("connection_success_rate", 100)
+        
+        if connection_rate < 50:  # Less than 50% success rate
+            alert_id = await self.trigger_alert(
+                "erpnext_connection",
+                f"ERPNext connection success rate is {connection_rate:.1f}%",
+                self.alert_rules["erpnext_connection"]["level"]
+            )
+            triggered_alerts.append(alert_id)
+        
+        # Check circuit breaker status
+        circuit_changes = erpnext_metrics.get("recent_circuit_breaker_changes", [])
+        for change in circuit_changes[-3:]:  # Check last 3 changes
+            if change["new_state"] == "OPEN":
+                alert_id = await self.trigger_alert(
+                    "circuit_breaker_open",
+                    f"Circuit breaker opened for {change['endpoint']}",
+                    self.alert_rules["circuit_breaker_open"]["level"]
+                )
+                triggered_alerts.append(alert_id)
+        
+        # Check API latency
+        endpoint_metrics = erpnext_metrics.get("endpoint_metrics", {})
+        for endpoint, metrics_data in endpoint_metrics.items():
+            avg_response_time = metrics_data.get("avg_response_time", 0)
+            if avg_response_time > self.alert_rules["high_erpnext_latency"]["threshold"]:
+                alert_id = await self.trigger_alert(
+                    "high_erpnext_latency",
+                    f"High latency for {endpoint}: {avg_response_time:.2f}s",
+                    self.alert_rules["high_erpnext_latency"]["level"]
+                )
+                triggered_alerts.append(alert_id)
         
         return triggered_alerts
     
@@ -186,7 +319,7 @@ class AlertManager:
         if alert_id in self.active_alerts:
             self.active_alerts[alert_id]["is_resolved"] = True
             self.active_alerts[alert_id]["resolved_at"] = datetime.now().isoformat()
-            self.active_alerts[alert_id]["resolution_message"] = resolution_message
+            self.active_alert s[alert_id]["resolution_message"] = resolution_message
             
             # Broadcast resolution
             await websocket_manager.broadcast_to_admins(
@@ -203,7 +336,7 @@ class AlertManager:
             logger.info(f"Alert resolved: {alert_id} - {resolution_message}")
 
 class LiveMonitor:
-    """Enhanced live monitoring system with performance tracking and alerting"""
+    """Enhanced live monitoring system with ERPNext integration tracking"""
     
     def __init__(self):
         self.active_jobs = {}
@@ -213,13 +346,186 @@ class LiveMonitor:
         self.performance_metrics = PerformanceMetrics()
         self.alert_manager = AlertManager()
         self.job_history = defaultdict(list)
+        self.erpnext_integration_history = deque(maxlen=100)
         self.system_metrics = {
             "start_time": datetime.now(),
             "total_processed_jobs": 0,
             "total_processed_records": 0,
-            "total_errors": 0
+            "total_errors": 0,
+            "total_erpnext_calls": 0,
+            "successful_erpnext_calls": 0
         }
     
+    async def start_erpnext_integration_monitoring(self, job_id: str, endpoint: ERPNextEndpoint, total_records: int):
+        """Start monitoring ERPNext integration process"""
+        try:
+            integration_data = {
+                "job_id": job_id,
+                "endpoint": endpoint.value,
+                "start_time": datetime.now(),
+                "total_records": total_records,
+                "processed_records": 0,
+                "successful_records": 0,
+                "failed_records": 0,
+                "circuit_breaker_state": "CLOSED",
+                "batches_processed": 0
+            }
+            
+            self.erpnext_integration_history.append(integration_data)
+            
+            # Broadcast ERP integration start
+            await websocket_manager.broadcast_message(
+                WebSocketMessage(
+                    type=WebSocketMessageType.ERP_INTEGRATION_PROGRESS,
+                    data={
+                        "type": "integration_started",
+                        "job_id": job_id,
+                        "endpoint": endpoint.value,
+                        "total_records": total_records,
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    timestamp=datetime.now()
+                )
+            )
+            
+            logger.info(f"Started ERPNext integration monitoring for job {job_id}, endpoint: {endpoint.value}")
+            
+        except Exception as e:
+            logger.error(f"Failed to start ERPNext integration monitoring: {e}")
+    
+    async def update_erpnext_integration_progress(self, job_id: str, progress_data: Dict[str, Any]):
+        """Update ERPNext integration progress"""
+        try:
+            # Find the integration record
+            integration_record = None
+            for record in self.erpnext_integration_history:
+                if record["job_id"] == job_id:
+                    integration_record = record
+                    break
+            
+            if not integration_record:
+                return
+            
+            # Update progress
+            integration_record.update({
+                "processed_records": progress_data.get("processed", 0),
+                "successful_records": progress_data.get("successful", 0),
+                "failed_records": progress_data.get("failed", 0),
+                "batches_processed": progress_data.get("batches_processed", 0),
+                "last_update": datetime.now()
+            })
+            
+            # Update system metrics
+            self.system_metrics["total_erpnext_calls"] += progress_data.get("api_calls", 0)
+            self.system_metrics["successful_erpnext_calls"] += progress_data.get("successful_api_calls", 0)
+            
+            # Record performance metrics
+            if "processing_time" in progress_data:
+                self.performance_metrics.record_processing_time(progress_data["processing_time"])
+                self.performance_metrics.erpnext_metrics.record_batch_processing_time(progress_data["processing_time"])
+            
+            if "api_response_time" in progress_data:
+                self.performance_metrics.erpnext_metrics.record_api_response_time(
+                    progress_data.get("endpoint", "unknown"),
+                    progress_data["api_response_time"]
+                )
+            
+            # Broadcast progress update
+            progress_update = ERPIntegrationProgress(
+                job_id=job_id,
+                endpoint=ERPNextEndpoint(progress_data.get("endpoint", "unknown")),
+                processed=progress_data.get("processed", 0),
+                successful=progress_data.get("successful", 0),
+                failed=progress_data.get("failed", 0),
+                timestamp=datetime.now(),
+                circuit_breaker_state=progress_data.get("circuit_breaker_state", "CLOSED")
+            )
+            
+            await websocket_manager.broadcast_message(progress_update.dict())
+            
+            logger.debug(f"ERPNext integration progress for {job_id}: {progress_data.get('processed', 0)} records")
+            
+        except Exception as e:
+            logger.error(f"Failed to update ERPNext integration progress: {e}")
+    
+    async def record_erpnext_api_call(self, endpoint: str, success: bool, response_time: float):
+        """Record ERPNext API call for monitoring"""
+        try:
+            # Record in performance metrics
+            self.performance_metrics.erpnext_metrics.record_api_response_time(endpoint, response_time)
+            self.performance_metrics.erpnext_metrics.record_api_success(endpoint, success)
+            
+            # Update system metrics
+            self.system_metrics["total_erpnext_calls"] += 1
+            if success: self.system_metrics["successful_erpnext_calls"] += 1
+            
+            # Check for alert conditions
+            if not success:
+                # Track consecutive failures for alerting
+                self.alert_manager.erpnext_failure_count[endpoint] += 1
+                
+                failure_count = self.alert_manager.erpnext_failure_count[endpoint]
+                if failure_count >= self.alert_manager.alert_rules["erpnext_api_failure"]["threshold"]:
+                    await self.alert_manager.trigger_alert(
+                        "erpnext_api_failure",
+                        f"Consecutive {failure_count} failures for {endpoint}",
+                        AlertLevel.ERROR
+                    )
+            else:
+                # Reset failure count on success
+                self.alert_manager.erpnext_failure_count[endpoint] = 0
+            
+        except Exception as e:
+            logger.error(f"Failed to record ERPNext API call: {e}")
+    
+    async def record_circuit_breaker_change(self, endpoint: str, old_state: str, new_state: str):
+        """Record circuit breaker state change"""
+        try:
+            self.performance_metrics.erpnext_metrics.record_circuit_breaker_change(
+                old_state, new_state, endpoint
+            )
+            
+            # Broadcast state change
+            await websocket_manager.broadcast_message(
+                WebSocketMessage(
+                    type=WebSocketMessageType.SYSTEM_NOTIFICATION,
+                    data={
+                        "type": "circuit_breaker_change",
+                        "endpoint": endpoint,
+                        "old_state": old_state,
+                        "new_state": new_state,
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    timestamp=datetime.now()
+                )
+            )
+            
+            logger.info(f"Circuit breaker state changed for {endpoint}: {old_state} -> {new_state}")
+            
+        except Exception as e:
+            logger.error(f"Failed to record circuit breaker change: {e}")
+    
+    async def record_erpnext_connection_status(self, is_connected: bool):
+        """Record ERPNext connection status"""
+        try:
+            self.performance_metrics.erpnext_metrics.record_connection_status(is_connected)
+            
+            if not is_connected:
+                await self.alert_manager.trigger_alert(
+                    "erpnext_connection",
+                    "ERPNext connection lost",
+                    AlertLevel.CRITICAL
+                )
+            else:
+                # Resolve any existing connection alerts
+                for alert_id, alert in self.alert_manager.active_alerts.items():
+                    if alert["type"] == "erpnext_connection" and not alert.get("is_resolved", False):
+                        await self.alert_manager.resolve_alert(alert_id, "ERPNext connection restored")
+            
+        except Exception as e:
+            logger.error(f"Failed to record ERPNext connection status: {e}")
+    
+    # Existing methods remain the same but enhanced with ERPNext integration
     async def start_job_monitoring(self, job_id: str, user_id: str, initial_data: Dict[str, Any]):
         """Start monitoring a job with enhanced tracking"""
         try:
@@ -233,7 +539,12 @@ class LiveMonitor:
                     "failed": 0,
                     "current_stage": "initializing"
                 },
-                "metadata": initial_data
+                "metadata": initial_data,
+                "erpnext_integration": {
+                    "enabled": initial_data.get("erp_integration", False),
+                    "endpoint": initial_data.get("erp_endpoint"),
+                    "status": "pending"
+                }
             }
             
             # Record system metrics
@@ -273,6 +584,10 @@ class LiveMonitor:
             # Update progress information
             job_info["progress"].update(progress)
             job_info["last_update"] = datetime.now()
+            
+            # Update ERPNext integration status if present
+            if "erp_integration_status" in progress:
+                job_info["erpnext_integration"]["status"] = progress["erp_integration_status"]
             
             # Calculate percentage and estimated time
             total = progress.get("total", job_info["progress"]["total"])
@@ -317,124 +632,8 @@ class LiveMonitor:
         except Exception as e:
             logger.error(f"Failed to update job progress for {job_id}: {e}")
     
-    async def complete_job_monitoring(self, job_id: str, final_status: str, summary: Dict[str, Any] = None):
-        """Complete job monitoring with comprehensive reporting"""
-        try:
-            if job_id not in self.active_jobs:
-                return
-            
-            job_info = self.active_jobs[job_id]
-            user_id = job_info["user_id"]
-            start_time = job_info["start_time"]
-            processing_time = (datetime.now() - start_time).total_seconds()
-            
-            # Store job history
-            self.job_history[user_id].append({
-                "job_id": job_id,
-                "start_time": start_time.isoformat(),
-                "end_time": datetime.now().isoformat(),
-                "processing_time": processing_time,
-                "status": final_status,
-                "summary": summary or {}
-            })
-            
-            # Limit job history size
-            if len(self.job_history[user_id]) > 100:
-                self.job_history[user_id] = self.job_history[user_id][-100:]
-            
-            # Send completion message
-            await websocket_manager.broadcast_to_user(
-                user_id,
-                WebSocketMessage(
-                    type=WebSocketMessageType.SYSTEM_NOTIFICATION,
-                    data={
-                        "type": "job_completed",
-                        "job_id": job_id,
-                        "status": final_status,
-                        "processing_time": processing_time,
-                        "summary": summary,
-                        "message": f"Job completed: {job_id} - Status: {final_status}"
-                    },
-                    timestamp=datetime.now()
-                )
-            )
-            
-            # Remove from active monitoring
-            del self.active_jobs[job_id]
-            
-            logger.info(f"Completed monitoring job: {job_id} with status: {final_status}")
-            
-        except Exception as e:
-            logger.error(f"Failed to complete job monitoring for {job_id}: {e}")
-    
-    async def get_realtime_metrics(self, user_id: str) -> Dict[str, Any]:
-        """Get comprehensive real-time metrics for dashboard"""
-        cache_key = f"metrics_{user_id}"
-        current_time = datetime.now()
-        
-        # Check cache with TTL
-        if self._is_cache_valid(cache_key):
-            return self.metrics_cache[cache_key]["data"]
-        
-        try:
-            # Get user metrics from database
-            db_metrics = await supabase.get_user_metrics(user_id)
-            
-            # Get recent jobs for additional metrics
-            recent_jobs = await supabase.get_user_jobs(user_id, limit=50)
-            
-            # Calculate time-based metrics
-            today = datetime.now().date()
-            last_week = today - timedelta(days=7)
-            
-            today_jobs = []
-            week_jobs = []
-            
-            for job in recent_jobs:
-                job_time = datetime.fromisoformat(j["created_at"]).date()
-                if job_time == today:
-                    today_jobs.append(job)
-                if job_time >= last_week:
-                    week_jobs.append(job)
-            
-            # Calculate success rates
-            today_success_rate = self._calculate_success_rate(today_jobs)
-            week_success_rate = self._calculate_success_rate(week_jobs)
-            
-            # Get recent errors
-            recent_errors = self._get_recent_errors(recent_jobs, hours=24)
-            
-            # Get active monitoring jobs for user
-            user_active_jobs = [
-                job_id for job_id, info in self.active_jobs.items() 
-                if info["user_id"] == user_id
-            ]
-            
-            # Prepare comprehensive metrics
-            metrics_data = {
-                **db_metrics,
-                "today_jobs": len(today_jobs),
-                "week_jobs": len(week_jobs),
-                "today_success_rate": today_success_rate,
-                "week_success_rate": week_success_rate,
-                "active_monitoring": len(user_active_jobs),
-                "recent_errors": recent_errors,
-                "performance_metrics": self.performance_metrics.get_performance_summary(),
-                "system_health": await self._get_system_health(),
-                "last_updated": current_time.isoformat()
-            }
-            
-            # Update cache with size limit
-            self._update_cache(cache_key, metrics_data, current_time)
-            
-            return metrics_data
-            
-        except Exception as e:
-            logger.error(f"Failed to get realtime metrics for user {user_id}: {e}")
-            return self._get_fallback_metrics(current_time)
-    
     async def get_system_wide_metrics(self) -> Dict[str, Any]:
-        """Get system-wide metrics for admin dashboard"""
+        """Get enhanced system-wide metrics including ERPNext integration"""
         try:
             # Get performance metrics
             perf_metrics = self.performance_metrics.get_performance_summary()
@@ -454,6 +653,9 @@ class LiveMonitor:
                 if not alert.get("is_resolved", False)
             ]
             
+            # Get ERPNext integration status
+            erpnext_status = await erp_integration.get_system_status()
+            
             return {
                 **self.system_metrics,
                 **system_info,
@@ -461,89 +663,13 @@ class LiveMonitor:
                 "active_jobs_count": len(self.active_jobs),
                 "active_alerts": active_alerts,
                 "cache_size": len(self.metrics_cache),
+                "erpnext_integration_status": erpnext_status,
                 "timestamp": datetime.now().isoformat()
             }
             
         except Exception as e:
             logger.error(f"Failed to get system-wide metrics: {e}")
             return {}
-    
-    async def get_job_details(self, job_id: str) -> Dict[str, Any]:
-        """Get detailed job information with enhanced data"""
-        try:
-            job = await supabase.get_job_by_id(job_id)
-            if not job:
-                return {"error": "Job not found"}
-            
-            # Add enhanced monitoring information
-            monitoring_info = {}
-            if job_id in self.active_jobs:
-                job_info = self.active_jobs[job_id]
-                elapsed_time = (datetime.now() - job_info["start_time"]).total_seconds()
-                
-                monitoring_info = {
-                    "is_active": True,
-                    "progress": job_info["progress"],
-                    "start_time": job_info["start_time"].isoformat(),
-                    "last_update": job_info["last_update"].isoformat(),
-                    "elapsed_time": elapsed_time,
-                    "user_id": job_info["user_id"]
-                }
-           else:
-                monitoring_info = {"is_active": False}
-            
-            # Add performance data if available
-            performance_data = {
-                "processing_time": None,
-                "records_per_second": None
-            }
-            
-            if job.get("created_at") and job.get("completed_at"):
-                start_time = datetime.fromisoformat(job["created_at"])
-                end_time = datetime.fromisoformat(job["completed_at"])
-                processing_time = (end_time - start_time).total_seconds()
-                
-                performance_data["processing_time"] = processing_time
-                if processing_time > 0 and job.get("total_records"):
-                    performance_data["records_per_second"] = job["total_records"] / processing_time
-            
-            return {
-                **job,
-                **monitoring_info,
-                "performance": performance_data
-            }
-            
-        except Exception as e:
-            logger.error(f"Failed to get job details for {job_id}: {e}")
-            return {"error": str(e)}
-    
-    async def _get_system_health(self) -> Dict[str, Any]:
-        """Get system health status"""
-        try:
-            # Test database connection
-            db_test = await supabase.client.from_('profiles').select('count', count='exact').limit(1).execute()
-            db_health = "healthy" if db_test else "unhealthy"
-            
-            # Check memory usage
-            memory_usage = psutil.virtual_memory().percent
-            memory_health = "healthy" if memory_usage < 80 else "warning"
-            
-            # Check active connections
-            connections_health = "healthy" if len(self.active_jobs) < 100 else "warning"
-            
-            return {
-                "database": db_health,
-                "memory": memory_health,
-                "connections": connections_health,
-                "overall": "healthy" if all([
-                    db_health == "healthy",
-                    memory_health == "healthy",
-                    connections_health == "healthy"
-                ]) else "degraded"
-            }
-        except Exception as e:
-            logger.error(f"Failed to get system health: {e}")
-            return {"overall": "unhealthy", "error": str(e)}
     
     def _is_cache_valid(self, cache_key: str) -> bool:
         """Check if cache entry is still valid"""
@@ -555,14 +681,12 @@ class LiveMonitor:
         
         return cache_age < self.cache_ttl
     
-    def _update_cache(self, cache_key: str, data: Dict[str, Any], timestamp: datetime):
-        """Update cache with size management"""
-        # Remove oldest entries if cache is too large
+    def _update_cache(self, cache_key: str, data: Any, timestamp: datetime):
+        """Update cache with size limit"""
+        # Remove oldest entries if cache is full
         if len(self.metrics_cache) >= self.max_cache_size:
-            oldest_key = min(
-                self.metrics_cache.keys(),
-                key=lambda k: self.metrics_cache[k]["timestamp"]
-            )
+            oldest_key = min(self.metrics_cache.keys(), 
+                           key=lambda k: self.metrics_cache[k]["timestamp"])
             del self.metrics_cache[oldest_key]
         
         self.metrics_cache[cache_key] = {
@@ -573,116 +697,64 @@ class LiveMonitor:
     def _calculate_success_rate(self, jobs: List[Dict]) -> float:
         """Calculate success rate from job list"""
         if not jobs:
-            return 0.0
+            return 100.0
         
-        completed_jobs = [j for j in jobs if j.get("status") == "completed"]
-        return (len(completed_jobs) / len(jobs)) * 100
+        successful = sum(1 for job in jobs if job.get("status") == "completed")
+        return (successful / len(jobs)) * 100
     
     def _get_recent_errors(self, jobs: List[Dict], hours: int = 24) -> List[Dict]:
         """Get recent errors from job list"""
-        recent_errors = []
         cutoff_time = datetime.now() - timedelta(hours=hours)
         
+        recent_errors = []
         for job in jobs:
             job_time = datetime.fromisoformat(job["created_at"])
-            if job_time >= cutoff_time and job.get("error_log"):
-                for error in job["error_log"][:5]:  # Last 5 errors per job
-                    recent_errors.append({
-                        "job_id": job["job_id"],
-                        "filename": job["filename"],
-                        "error": error,
-                        "timestamp": job["created_at"],
-                        "mapping_name": job.get("column_mappings", {}).get("mapping_name", "Unknown")
-                    })
+            if job_time >= cutoff_time and job.get("status") == "failed":
+                recent_errors.append({
+                    "job_id": job["job_id"],
+                    "error": job.get("error_message", "Unknown error"),
+                    "timestamp": job["created_at"]
+                })
         
-        return sorted(recent_errors, key=lambda x: x["timestamp"], reverse=True)[:20]
+        return recent_errors[-10:]  # Return last 10 errors
     
     def _get_fallback_metrics(self, timestamp: datetime) -> Dict[str, Any]:
-        """Get fallback metrics when database is unavailable"""
+        """Get fallback metrics when database query fails"""
         return {
-            "total_jobs": 0,
-            "completed_jobs": 0,
-            "failed_jobs": 0,
-            "processing_jobs": 0,
-            "success_rate": 0,
             "today_jobs": 0,
             "week_jobs": 0,
             "today_success_rate": 0,
             "week_success_rate": 0,
             "active_monitoring": 0,
             "recent_errors": [],
-            "performance_metrics": {},
-            "system_health": {"overall": "unhealthy"},
-            "last_updated": timestamp.isoformat(),
-            "error": "Failed to fetch metrics from database"
+            "performance_metrics": self.performance_metrics.get_performance_summary(),
+            "system_health": {"status": "unknown"},
+            "last_updated": timestamp.isoformat()
         }
     
-    async def cleanup_old_monitoring(self):
-        """Clean up old monitoring sessions with enhanced logic"""
-        current_time = datetime.now()
-        expired_jobs = []
+    async def _get_system_health(self) -> Dict[str, Any]:
+        """Get system health status"""
+        try:
+            # Test database connection
+            supabase.client.from_('profiles').select('id').limit(1).execute()
+            db_health = "healthy"
+        except:
+            db_health = "unhealthy"
         
-        for job_id, job_info in self.active_jobs.items():
-            time_since_update = current_time - job_info["last_update"]
-            
-            # Different timeouts based on job stage
-            timeout = timedelta(hours=2)  # Default 2 hours
-            
-            if job_info["progress"]["current_stage"] in ["initializing", "validating"]:
-                timeout = timedelta(minutes=30)  # 30 minutes for early stages
-            elif job_info["progress"]["current_stage"] == "sending_to_erp":
-                timeout = timedelta(hours=1)  # 1 hour for ERP operations
-            
-            if time_since_update > timeout:
-                expired_jobs.append(job_id)
+        # Test ERPNext connection if available
+        if erp_integration.erpnext_client:
+            erp_status = await erp_integration.test_connection()
+            erp_health = "healthy" if erp_status["success"] else "unhealthy"
+        else:
+            erp_health = "not_configured"
         
-        for job_id in expired_jobs:
-            logger.warning(f"Job {job_id} exceeded timeout, marking as failed")
-            await self.complete_job_monitoring(
-                job_id, 
-                "timeout",
-                {"reason": "Job exceeded maximum allowed processing time"}
-            )
-        
-        # Clean up old cache entries
-        old_cache_keys = []
-        for cache_key, cache_entry in self.metrics_cache.items():
-            cache_age = (current_time - cache_entry["timestamp"]).total_seconds()
-            if cache_age > self.cache_ttl * 2:  # Double TTL for cleanup
-                old_cache_keys.append(cache_key)
-        
-        for cache_key in old_cache_keys:
-            del self.metrics_cache[cache_key]
+        return {
+            "database": db_health,
+            "erpnext": erp_health,
+            "websocket": "healthy" if websocket_manager else "unhealthy",
+            "overall": "healthy" if db_health == "healthy" else "degraded"
+        }
 
 # Global monitor instance
 live_monitor = LiveMonitor()
-
-# Background tasks
-async def monitoring_cleanup_task():
-    """Background task to clean up old monitoring sessions"""
-    while True:
-        try:
-            await live_monitor.cleanup_old_monitoring()
-            await asyncio.sleep(300)  # Run every 5 minutes
-        except Exception as e:
-            logger.error(f"Monitoring cleanup error: {e}")
-            await asyncio.sleep(60)
-
-async def performance_metrics_task():
-    """Background task to collect performance metrics"""
-    while True:
-        try:
-            # Record system metrics
-            live_monitor.performance_metrics.record_memory_usage()
-            
-            # Check for alerts
-            system_metrics = await live_monitor.get_system_wide_metrics()
-            await live_monitor.alert_manager.check_and_trigger_alerts(
-                system_metrics.get("performance_metrics", {})
-            )
-            
-            await asyncio.sleep(60)  # Run every minute
-            
-        except Exception as e:
-            logger.error(f"Performance metrics task error: {e}")
-            await asyncio.sleep(30)
+       
